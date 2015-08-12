@@ -13,30 +13,16 @@
 
 #define PARAMS_LEN ((SALT_LEN + NONCE_LEN) * 2 + 1)
 #define HEADER_LEN (sizeof(header) - 1)
-#define SALT_H_LEN (SALT_LEN * 2)
-#define NONCE_H_LEN (NONCE_LEN * 2)
+#define OPSLIMIT crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE
+#define MEMLIMIT crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE
 
 typedef unsigned char uchar;
 typedef unsigned int uint;
-typedef enum {ENC, DEC, TEST} cmd_t;
+typedef enum {ENC, DEC} cmd_t;
 
 char header[] = "Params_";
 static char key_hex[KEY_LEN * 2 + 1];
 
-/*  */
-/* goal: encrypt/decrypt file
-   take a password from the user
-   NOT as a command line argument, but take input later */
-
-/* using password from user:
-  encrypt a file passed on the command line
-  write the salt, nonce, and params in the header of the file
-  first is a switch - enc/dec
-  snd is filename
-  get pass from user
-  if enc - encrypt file, stream to stdout
-  if dec - decrypt file, stream to sdout
-*/
 int
 get_key(const unsigned char *salt,
             unsigned char *key,
@@ -44,12 +30,11 @@ get_key(const unsigned char *salt,
             const char *pw,
             unsigned int pw_len)
 {
-    /* store all parameters along with the password */
     return crypto_pwhash_scryptsalsa208sha256(key, key_len,
                                               pw, pw_len,
                                               salt,
-        crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE,
-        crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE);
+                                              OPSLIMIT,
+                                              MEMLIMIT);
 }
 
 /* read entire file into a buffer */
@@ -62,9 +47,6 @@ read_file(FILE *fd, int *bytes)
     out = NULL;
     rc = -1;
     cnt = 0;
-    /* out = malloc(CHUNK_SIZE); */
-    /* if (!out) */
-    /*     goto out; */
 
     while (!feof(fd)) {
         char *p;
@@ -92,20 +74,9 @@ read_file(FILE *fd, int *bytes)
     return out;
 }
 
-/* int crypto_secretbox_easy(unsigned char *c, const unsigned char *m, */
-/*                           unsigned long long mlen, const unsigned char *n, */
-/*                           const unsigned char *k); */
-/* int get_key(const unsigned char *salt, */
-/*             unsigned char *key, */
-/*             unsigned int key_len, */
-/*             const char *pw, */
-/*             unsigned int pw_len) */
-
 int
 encrypt_file(const char *pwd, uint pwd_len, const uchar *msg, uint msg_len, FILE *stream)
 {
-    /* first: turn password into key */
-    /* randomly generate salt */
     uchar salt[SALT_LEN];
     uchar nonce[NONCE_LEN];
     uchar key[KEY_LEN], *cphr;
@@ -128,33 +99,23 @@ encrypt_file(const char *pwd, uint pwd_len, const uchar *msg, uint msg_len, FILE
         goto out;
     }
 
-    fprintf(stderr, "msg len is: %u\n", msg_len);
     crypto_secretbox_easy(cphr, msg, msg_len, nonce, key);
-    fprintf(stderr, "encrypted the stuff\n");
-    fprintf(stderr, "first char of cphr: %d\n", (int) *cphr);
 
     /* salt, then nonce */
+    /* XXX should i check we really wrote the right number of bytes? */
     size_t br;
     br = fwrite(header, sizeof(*header), strlen(header), stream);
-    fprintf(stderr, "wrote %lu bytes for header\n", br);
     br = fwrite(salt, sizeof(*salt), SALT_LEN, stream);
-    fprintf(stderr, "wrote %lu bytes for salt\n", br);
     br = fwrite(nonce, sizeof(*nonce), NONCE_LEN, stream);
-    fprintf(stderr, "wrote %lu bytes for nonce\n", br);
     br = fwrite(cphr, sizeof(*cphr), cphr_len, stream);
-    fprintf(stderr, "wrote %lu bytes for cphr\n", br);
 
     rc = 0;
  out:
     free(cphr);
-    /* free(dec); */
     return rc;
     
 }
 
-
-    /* err = sodium_hex2bin(back, sizeof(back), hex_r, sizeof(hex_r), NULL, &blen, NULL); */
-/* reads chars from fin, converts to uchars */
 int
 read_params(FILE *fin, uchar *salt, uchar *nonce) {
     size_t br;
@@ -162,16 +123,13 @@ read_params(FILE *fin, uchar *salt, uchar *nonce) {
     br = fread(salt, sizeof(*salt), SALT_LEN, fin);
     if (br != SALT_LEN)
         fprintf(stderr, "oops\n");
-    fprintf(stderr, "read %lu bytes for salt\n", br);
     br = fread(nonce, sizeof(*nonce), NONCE_LEN, fin);
     if (br != NONCE_LEN)
         fprintf(stderr, "nonce oops\n");
-    fprintf(stderr, "read %lu bytes for nonce\n", br);
 
     return 0;
 }
 
-/* crypto_secretbox_open_easy(decrypted, ciphertext, c_len, nonce, key) */
 char *
 decrypt_file(const char *pwd, uint pwd_len, FILE *fin, uint *mlen)
 {
@@ -184,36 +142,27 @@ decrypt_file(const char *pwd, uint pwd_len, FILE *fin, uint *mlen)
     cphr = NULL;
     msg = NULL;
     err = -1;
-    /* read salt, nonce, and then gen key  */
+
     fread(headbuf, sizeof(*headbuf), sizeof(headbuf), fin);
     if (strncmp(headbuf, header, HEADER_LEN)) {
         fprintf(stderr, "header mismatch\n");
         goto out;
     }
-    fprintf(stderr, "all seems good\n");
+
     read_params(fin, salt, nonce);
     if (get_key(salt, key, KEY_LEN, pwd, pwd_len)) {
         fprintf(stderr, "couldn't get key\n");
         goto out;
     }
-    sodium_bin2hex(key_hex, sizeof(key_hex), key, KEY_LEN);
-    fprintf(stderr, "key is: %s\n", key_hex);
-    fprintf(stderr, "key length should be: %d\n", KEY_LEN * 2);
 
     cphr = (uchar *)read_file(fin, &cphr_len);
     if (!cphr) {
         fprintf(stderr, "couldn't read file\n");
         goto out;
     }
-    fprintf(stderr, "cphr len is: %d\n", cphr_len);
-    fprintf(stderr, "first char of cphr: %d\n", (int)*cphr);
     msg_len = cphr_len - crypto_secretbox_MACBYTES;
     if (msg_len < 0)
         goto out;
-    char *cphr_hex;
-    cphr_hex = malloc((cphr_len * 2 + 1) * sizeof(*cphr_hex));
-    sodium_bin2hex(cphr_hex, cphr_len * 2 + 1, cphr, cphr_len);
-    fprintf(stderr, "argggh cphr: %s\n", cphr_hex);
 
     msg = malloc(msg_len * sizeof(*msg));
     if (!msg)
@@ -222,9 +171,6 @@ decrypt_file(const char *pwd, uint pwd_len, FILE *fin, uint *mlen)
         fprintf(stderr, "oops - couldn't decrypt\n");
         goto out;
     }
-
-/*      char * */
-/* read_file(FILE *fd, int *bytes) */
 
     *mlen = (uint) msg_len;
     err = 0;
@@ -237,7 +183,7 @@ decrypt_file(const char *pwd, uint pwd_len, FILE *fin, uint *mlen)
     
     return (char *)msg;
 }
-        /* err = decrypt(pwd, strlen(pwd), fd, stdout); */
+
 int
 decrypt(const char *pwd, uint pwd_len, FILE *fin, FILE *fout)
 {
@@ -250,13 +196,12 @@ decrypt(const char *pwd, uint pwd_len, FILE *fin, FILE *fout)
     if (!res)
         goto out;
 
-    fprintf(stderr, "all good\n");
     fwrite(res, sizeof(*res), mlen, fout);
     rc = 0;
  out:
     return rc;
 }
-    /* crypto_secretbox_easy(ciphertext, message, m_len, nonce, key); */
+
 int
 my_getpass(char *pwbuf, int buf_len, FILE *stream)
 {
@@ -301,40 +246,18 @@ encrypt(char *pwd, uint pwd_len, FILE *fin, FILE *fout)
     int rc, flen;
     char *fbuf;
 
-
     rc = -1;
     fbuf = read_file(fin, &flen);
     if (!fbuf)
         goto out;
 
-    fprintf(stderr, "going to encrypt file\n");
     if (encrypt_file(pwd, pwd_len, (unsigned char*) fbuf, flen, fout))
         goto out;
-    fprintf(stderr, "all good\n");
     rc = 0;
  out:
     free(fbuf);
     return rc;
 }
-
-/* int */
-/* test(char *pwd, uint pwd_len, FILE *msg) */
-/* { */
-/*     FILE *sfcphr, *sfdec; */
-/*     char *bufcphr, *bufdec; */
-/*     size_t cphr_sz, dec_sz; */
-/* /\* int *\/ */
-/* /\* decrypt(const char *pwd, uint pwd_len, FILE *fin, FILE *fout) *\/ */
-
-/*     bufcphr = bufdec = NULL; */
-/*     cphr_sz = dec_sz = 0; */
-/*     sfcphr = open_memstream(&bufcphr, &cphr_sz); */
-/*     encrypt(pwd, pwd_len, fin, sfcphr); */
-/*     fclose(sfcphr); */
-/*     sfcphr = fmemopen(bufcphr, cphr_sz, "r"); */
-/*     sfdec = open_memstream(&bufdec, &dec_sz); */
-/*     decrypt(pwd, pwd_len, sfcphr, sfdec); */
-/* } */
 
 int main(int argc, char **argv)
 {
@@ -356,70 +279,45 @@ int main(int argc, char **argv)
         cmd = ENC;
     else if (!strncmp(cmds, "dec", 3))
         cmd = DEC;
-    else if (!strncmp(cmds, "test", 4))
-        cmd = TEST;
     else {
         fprintf(stderr, "invalid command\n");
         goto out;
     }
 
     fprintf(stderr, "password:");
-    if (my_getpass(pwd, PASSWORD_MAX_LEN, stdin)) {
+    err = my_getpass(pwd, PASSWORD_MAX_LEN, stdin);
+    fprintf(stderr, "\n");
+    if (err)
         goto out;
-    }
     fname = argv[2];
     switch (cmd) {
     case ENC:
-        fprintf(stderr, "encrypting...\n");
         fd = fopen(fname, "r");
         if (!fd) {
             perror("couldn't open file");
             exit(-1);
         }
-        /* encrypt(char *pwd, uint pwd_len, stream *fin, stream *fout) */
-        err = encrypt(pwd, strlen(pwd), fd, stdout);
+        rc = encrypt(pwd, strlen(pwd), fd, stdout);
+        if (rc)
+            fprintf(stderr, "encryption failed\n");
         break;
     case DEC:
-        fprintf(stderr, "decrypting...\n");
         fd = fopen(fname, "r");
         if (!fd) {
             perror("couldn't open file");
             exit(-1);
         }
-        err = decrypt(pwd, strlen(pwd), fd, stdout);
-        /* fprintf(stderr, "not implemented\n"); */
+        rc = decrypt(pwd, strlen(pwd), fd, stdout);
+        if (rc)
+            fprintf(stderr, "decryption failed\n");
         break;
-    /* case TEST: */
-    /*     fprintf(stderr, "testing..\n"); */
-    /*     fd = fopen(fname, "r"); */
-    /*     if (!fd) { */
-    /*         perror("couldn't open file"); */
-    /*         exit(-1); */
-    /*     } */
-    /*     err = test(pwd, strlen(pwd), fd); */
     default:
         fprintf(stderr, "how did I get here?\n");
         break;
     }
 
-/* int */
-/* my_getpass(char *pwbuf, int buf_len, FILE *stream) */
-
-
-    /* printf("got password: %sEND\n", pwd); */
-
-/* encrypt_file(const char *pwd, uint pwd_len, const uchar *msg, uint msg_len, FILE *stream)     */
-    /* now I need to encrypt the file - BUT - need password length */
-
-    rc = 0;
  out:
     fclose(fd);
     free(fbuf);
     return rc;
-    /* printf("password:\n"); */
-    /* if (my_getpass(pwd, PASSWORD_MAX_LEN, stdin)) { */
-    /*     printf("failed\n"); */
-    /*     exit(-1); */
-    /* } */
-    /* printf("i read: %s\n", pwd); */
 }
