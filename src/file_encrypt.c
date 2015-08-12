@@ -18,7 +18,7 @@
 
 typedef unsigned char uchar;
 typedef unsigned int uint;
-typedef enum {ENC, DEC} cmd_t;
+typedef enum {ENC, DEC, TEST} cmd_t;
 
 char header[] = "Params_";
 static char key_hex[KEY_LEN * 2 + 1];
@@ -70,7 +70,6 @@ read_file(FILE *fd, int *bytes)
         char *p;
         size_t br;
 
-        /* printf("reallcing...\n"); */
         p = realloc(out, cnt + CHUNK_SIZE);
         if (!p)
             goto out;
@@ -133,46 +132,18 @@ encrypt_file(const char *pwd, uint pwd_len, const uchar *msg, uint msg_len, FILE
     crypto_secretbox_easy(cphr, msg, msg_len, nonce, key);
     fprintf(stderr, "encrypted the stuff\n");
     fprintf(stderr, "first char of cphr: %d\n", (int) *cphr);
-    /* uchar *dec; */
-    /* dec = malloc(msg_len * sizeof(*dec)); */
-    /* if (crypto_secretbox_open_easy(dec, cphr, cphr_len, nonce, key)) { */
-    /*     /\* message forged! *\/ */
-    /*     printf("what the beef\n"); */
-    /*     goto out; */
-    /* } */
-    /* printf("I got just encrypted and decrypted: %.*s\n", msg_len, dec); */
-    /* char *sstr, *nstr; */
-    char params[PARAMS_LEN];
-    /* write salt, then nonce */
-    if (!sodium_bin2hex(params, SALT_LEN * 2 + 1, salt, SALT_LEN)) {
-        fprintf(stderr, "problem with bin2hex!\n");
-        goto out;
-    }
-    if (!sodium_bin2hex(params + SALT_LEN * 2, NONCE_LEN * 2 + 1, nonce, NONCE_LEN)) {
-        fprintf(stderr, "problem with bin2hex, snd!\n");
-        goto out;
-    }
 
-    fprintf(stderr, "salt in hex: %.*s\n", SALT_H_LEN, params);
-    fprintf(stderr, "nonce in hex: %.*s\n", NONCE_H_LEN, params + SALT_H_LEN);
-    sodium_bin2hex(key_hex, sizeof(key_hex), key, KEY_LEN);
-    fprintf(stderr, "key is: %s\n", key_hex);
-    fprintf(stderr, "key length should be: %d\n", KEY_LEN * 2);
-    char *cphr_hex;
-    cphr_hex = malloc((cphr_len * 2 + 1) * sizeof(*cphr_hex));
-    sodium_bin2hex(cphr_hex, cphr_len * 2 + 1, cphr, cphr_len);
-    fprintf(stderr, "argggh cphr: %s\n", cphr_hex);
+    /* salt, then nonce */
+    size_t br;
+    br = fwrite(header, sizeof(*header), strlen(header), stream);
+    fprintf(stderr, "wrote %lu bytes for header\n", br);
+    br = fwrite(salt, sizeof(*salt), SALT_LEN, stream);
+    fprintf(stderr, "wrote %lu bytes for salt\n", br);
+    br = fwrite(nonce, sizeof(*nonce), NONCE_LEN, stream);
+    fprintf(stderr, "wrote %lu bytes for nonce\n", br);
+    br = fwrite(cphr, sizeof(*cphr), cphr_len, stream);
+    fprintf(stderr, "wrote %lu bytes for cphr\n", br);
 
-    
-    fwrite(header, sizeof(*header), sizeof(header) - 1, stream);
-    fwrite(params, sizeof(*params), PARAMS_LEN - 1, stream);
-    /* fwrite("O", 1, 1, stream); */
-    fwrite(cphr, sizeof(*cphr), cphr_len, stream);
-    /* sstr = malloc((SALT_LEN * 2 + 1) * sizeof(*sstr)); */
-    /* if (!sstr) */
-    /*     goto out; */
-    /* nstr = malloc(( */
-    /* how many bytes do I need here? write in hex */
     rc = 0;
  out:
     free(cphr);
@@ -186,17 +157,17 @@ encrypt_file(const char *pwd, uint pwd_len, const uchar *msg, uint msg_len, FILE
 /* reads chars from fin, converts to uchars */
 int
 read_params(FILE *fin, uchar *salt, uchar *nonce) {
-    char salt_h[SALT_H_LEN], nonce_h[NONCE_H_LEN];
     size_t br;
-    if (fread(salt_h, sizeof(*salt), SALT_H_LEN, fin) <= 0)
-        fprintf(stderr, "error on salt read\n");
-    if (fread(nonce_h, sizeof(*nonce), NONCE_H_LEN, fin) <= 0)
-        fprintf(stderr, "error on nonce read\n");
 
-    fprintf(stderr, "salt in hex: %.*s\n", SALT_H_LEN, salt_h);
-    fprintf(stderr, "nonce in hex: %.*s\n", NONCE_H_LEN, nonce_h);
-    sodium_hex2bin(salt, SALT_LEN, salt_h, SALT_H_LEN, NULL, &br, NULL);
-    sodium_hex2bin(nonce, NONCE_LEN, salt_h, SALT_H_LEN, NULL, &br, NULL);
+    br = fread(salt, sizeof(*salt), SALT_LEN, fin);
+    if (br != SALT_LEN)
+        fprintf(stderr, "oops\n");
+    fprintf(stderr, "read %lu bytes for salt\n", br);
+    br = fread(nonce, sizeof(*nonce), NONCE_LEN, fin);
+    if (br != NONCE_LEN)
+        fprintf(stderr, "nonce oops\n");
+    fprintf(stderr, "read %lu bytes for nonce\n", br);
+
     return 0;
 }
 
@@ -249,12 +220,9 @@ decrypt_file(const char *pwd, uint pwd_len, FILE *fin, uint *mlen)
         goto out;
     if (crypto_secretbox_open_easy(msg, cphr, cphr_len, nonce, key)) {
         fprintf(stderr, "oops - couldn't decrypt\n");
-        printf("what the hell\n");
-        printf("%s\n", msg);
         goto out;
     }
 
-        
 /*      char * */
 /* read_file(FILE *fd, int *bytes) */
 
@@ -349,6 +317,25 @@ encrypt(char *pwd, uint pwd_len, FILE *fin, FILE *fout)
     return rc;
 }
 
+/* int */
+/* test(char *pwd, uint pwd_len, FILE *msg) */
+/* { */
+/*     FILE *sfcphr, *sfdec; */
+/*     char *bufcphr, *bufdec; */
+/*     size_t cphr_sz, dec_sz; */
+/* /\* int *\/ */
+/* /\* decrypt(const char *pwd, uint pwd_len, FILE *fin, FILE *fout) *\/ */
+
+/*     bufcphr = bufdec = NULL; */
+/*     cphr_sz = dec_sz = 0; */
+/*     sfcphr = open_memstream(&bufcphr, &cphr_sz); */
+/*     encrypt(pwd, pwd_len, fin, sfcphr); */
+/*     fclose(sfcphr); */
+/*     sfcphr = fmemopen(bufcphr, cphr_sz, "r"); */
+/*     sfdec = open_memstream(&bufdec, &dec_sz); */
+/*     decrypt(pwd, pwd_len, sfcphr, sfdec); */
+/* } */
+
 int main(int argc, char **argv)
 {
     char pwd[PASSWORD_MAX_LEN], *sp, *fname, *fbuf, *cmds;
@@ -369,6 +356,8 @@ int main(int argc, char **argv)
         cmd = ENC;
     else if (!strncmp(cmds, "dec", 3))
         cmd = DEC;
+    else if (!strncmp(cmds, "test", 4))
+        cmd = TEST;
     else {
         fprintf(stderr, "invalid command\n");
         goto out;
@@ -400,6 +389,14 @@ int main(int argc, char **argv)
         err = decrypt(pwd, strlen(pwd), fd, stdout);
         /* fprintf(stderr, "not implemented\n"); */
         break;
+    /* case TEST: */
+    /*     fprintf(stderr, "testing..\n"); */
+    /*     fd = fopen(fname, "r"); */
+    /*     if (!fd) { */
+    /*         perror("couldn't open file"); */
+    /*         exit(-1); */
+    /*     } */
+    /*     err = test(pwd, strlen(pwd), fd); */
     default:
         fprintf(stderr, "how did I get here?\n");
         break;
