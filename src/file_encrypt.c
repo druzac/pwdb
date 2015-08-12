@@ -1,7 +1,6 @@
 #include <sodium.h>
 #include <string.h>
 #include <stdio.h>
-
 #include <termios.h>
 
 #define PASSWORD_MAX_LEN 13
@@ -11,7 +10,6 @@
 #define NONCE_LEN crypto_secretbox_NONCEBYTES
 #define SALT_LEN crypto_pwhash_scryptsalsa208sha256_SALTBYTES
 
-#define PARAMS_LEN ((SALT_LEN + NONCE_LEN) * 2 + 1)
 #define HEADER_LEN (sizeof(header) - 1)
 #define OPSLIMIT crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE
 #define MEMLIMIT crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE
@@ -21,7 +19,6 @@ typedef unsigned int uint;
 typedef enum {ENC, DEC} cmd_t;
 
 char header[] = "Params_";
-static char key_hex[KEY_LEN * 2 + 1];
 
 int
 get_key(const unsigned char *salt,
@@ -117,7 +114,8 @@ encrypt_file(const char *pwd, uint pwd_len, const uchar *msg, uint msg_len, FILE
 }
 
 int
-read_params(FILE *fin, uchar *salt, uchar *nonce) {
+read_params(FILE *fin, uchar *salt, uchar *nonce)
+{
     size_t br;
 
     br = fread(salt, sizeof(*salt), SALT_LEN, fin);
@@ -134,7 +132,6 @@ char *
 decrypt_file(const char *pwd, uint pwd_len, FILE *fin, uint *mlen)
 {
     char headbuf[sizeof(header) - 1];
-    char paramsbuf[PARAMS_LEN - 1];
     uchar salt[SALT_LEN], nonce[NONCE_LEN], key[KEY_LEN], *msg;
     uchar *cphr;
     int msg_len, cphr_len, err;
@@ -206,9 +203,8 @@ int
 my_getpass(char *pwbuf, int buf_len, FILE *stream)
 {
     struct termios old, new;
-    int nread, rc, term_set;
+    int rc, term_set;
     size_t br;
-    char *p;
 
     rc = -1;
     term_set = 0;
@@ -259,10 +255,11 @@ encrypt(char *pwd, uint pwd_len, FILE *fin, FILE *fout)
     return rc;
 }
 
-int main(int argc, char **argv)
+int
+main(int argc, char **argv)
 {
-    char pwd[PASSWORD_MAX_LEN], *sp, *fname, *fbuf, *cmds;
-    int err, flen, rc;
+    char pwd[PASSWORD_MAX_LEN], *fname, *fbuf, *cmds;
+    int err, rc;
     FILE *fd;
     cmd_t cmd;
 
