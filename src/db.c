@@ -4,21 +4,6 @@
 
 #include "db.h"
 
-/* struct pwdb_entry { */
-/*     struct pwdb_accnt *accnt; */
-/*     char *pwd; */
-/*     struct pwdb_entry *next; */
-/* }; */
-
-/* struct pwdb { */
-/*     struct pwdb_entry *head; */
-/* }; */
-
-/* struct pwdb_accnt { */
-/*     char *uid; */
-/*     char *domain; */
-/* }; */
-
 void
 pwdb_init(struct pwdb *db)
 {
