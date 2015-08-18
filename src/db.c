@@ -225,12 +225,13 @@ pwdb_deserialize(unsigned char *buf, unsigned int len)
     struct pwdb_entry *entry, **curr;
     struct pwdb_accnt *accnt;
 
+
     err = -1;
     br = 0;
     s = NULL;
     entry = NULL;
     accnt = NULL;
-    db = malloc(sizeof(*db));
+    db = calloc(1, sizeof(*db));
     if (!db)
         goto out;
     curr = &db->head;
@@ -295,58 +296,58 @@ pwdb_print_accnts(struct pwdb *db)
     free(accnts);
 }
 
-int
-main(void)
-{
-    struct pwdb db, *dbp;
-    char *res;
+/* int */
+/* main(void) */
+/* { */
+/*     struct pwdb db, *dbp; */
+/*     char *res; */
 
-    dbp = &db;
-    pwdb_init(dbp);
+/*     dbp = &db; */
+/*     pwdb_init(dbp); */
 
-    res = pwdb_lookup(dbp, "john", "google");
-    if (res)
-        printf("lookup on empty db failed\n");
+/*     res = pwdb_lookup(dbp, "john", "google"); */
+/*     if (res) */
+/*         printf("lookup on empty db failed\n"); */
 
-    if (pwdb_insert(dbp, "john", "google", "goodpass"))
-        printf("insert failed\n");
+/*     if (pwdb_insert(dbp, "john", "google", "goodpass")) */
+/*         printf("insert failed\n"); */
 
-    res = pwdb_lookup(dbp, "john", "google");
-    printf("first lookup: %s\n", res);
-    if (strcmp(res, "goodpass"))
-        printf("lookup failed\n");
+/*     res = pwdb_lookup(dbp, "john", "google"); */
+/*     printf("first lookup: %s\n", res); */
+/*     if (strcmp(res, "goodpass")) */
+/*         printf("lookup failed\n"); */
 
-    if (pwdb_insert(dbp, "mary", "linkedin", "betterpass"))
-        printf("FAIL: 2nd insert\n");
+/*     if (pwdb_insert(dbp, "mary", "linkedin", "betterpass")) */
+/*         printf("FAIL: 2nd insert\n"); */
 
-    res = pwdb_lookup(dbp, "john", "google");
-    if (strcmp(res, "goodpass"))
-        printf("FAIL: lookup\n");
+/*     res = pwdb_lookup(dbp, "john", "google"); */
+/*     if (strcmp(res, "goodpass")) */
+/*         printf("FAIL: lookup\n"); */
 
-    res = pwdb_lookup(dbp, "mary", "linkedin");
-    if (strcmp(res, "betterpass"))
-        printf("FAIL: lookup\n");
+/*     res = pwdb_lookup(dbp, "mary", "linkedin"); */
+/*     if (strcmp(res, "betterpass")) */
+/*         printf("FAIL: lookup\n"); */
 
-    if (pwdb_insert(dbp, "sue", "amazon", "bestpass"))
-        printf("FAIL: insert\n");
-    pwdb_print_accnts(dbp);
+/*     if (pwdb_insert(dbp, "sue", "amazon", "bestpass")) */
+/*         printf("FAIL: insert\n"); */
+/*     pwdb_print_accnts(dbp); */
 
-    unsigned char *buf;
-    int blen;
-    blen = 0;
-    printf("serializing\n");
-    buf = pwdb_serialize(dbp, &blen);
-    if (!buf)
-        printf("FAIL: serialize\n");
+/*     unsigned char *buf; */
+/*     int blen; */
+/*     blen = 0; */
+/*     printf("serializing\n"); */
+/*     buf = pwdb_serialize(dbp, &blen); */
+/*     if (!buf) */
+/*         printf("FAIL: serialize\n"); */
 
-    int i;
-    for (i = 0; i < blen; i++) {
-        putchar(buf[i]);
-    }
-    printf("\n");
-    struct pwdb *cpy;
-    cpy = pwdb_deserialize(buf, blen);
-    printf("deserialized:\n");
-    if (cpy)
-        pwdb_print_accnts(cpy);
-}
+/*     int i; */
+/*     for (i = 0; i < blen; i++) { */
+/*         putchar(buf[i]); */
+/*     } */
+/*     printf("\n"); */
+/*     struct pwdb *cpy; */
+/*     cpy = pwdb_deserialize(buf, blen); */
+/*     printf("deserialized:\n"); */
+/*     if (cpy) */
+/*         pwdb_print_accnts(cpy); */
+/* } */

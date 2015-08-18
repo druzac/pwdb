@@ -1,13 +1,15 @@
 #include <sodium.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
+#include <termios.h>
+
+#include "util.h"
 
 #define NUM_CHARS (26*2 + 10)
 #define UPPER_START 65
 #define LOWER_START 97
 #define DIGIT_START 48
-
-/* void randombytes_buf(void * const buf, const size_t size); */
 
 /* len is password len
    it's callers responsibility to make sure
@@ -40,17 +42,42 @@ gen_pass(char *out, size_t len, bool syms)
     out[len] = '\0';
 }
 
+int
+get_pass(char *prompt, char *pwbuf, int buf_len, FILE *stream)
+{
+    struct termios old, new;
+    int rc, term_set;
+    size_t br;
 
-/* int main() */
-/* { */
-/*     char test_pass[13]; */
-/*     int i, num_its; */
+    rc = -1;
+    term_set = 0;
 
-/*     num_its = 1; */
-/*     sodium_init(); */
-/*     for (i = 0; i < 1; i++) { */
-/*         gen_pass(test_pass, 12, false); */
-/*         printf("%s\n", test_pass); */
-/*     } */
-/*     printf("hey there\n"); */
-/* } */
+    /* Turn echoing off and fail if we can't. */
+    if (tcgetattr(fileno (stream), &old) != 0)
+        goto out;
+    new = old;
+    new.c_lflag &= ~ECHO;
+    if (tcsetattr(fileno (stream), TCSAFLUSH, &new) != 0)
+        goto out;
+    term_set = 1;
+    
+    /* Read the password. */
+    printf("%s", prompt);
+    if (!fgets(pwbuf, buf_len - 1, stream)) {
+        printf("\n");
+        goto out;
+    }
+    printf("\n");
+    br = strlen(pwbuf);
+    if (pwbuf[br - 1] != '\n') {
+        fprintf(stderr, "too many characters in password\n");
+        goto out;
+    }
+    pwbuf[br - 1] = '\0';
+    rc = 0;
+ out:
+    /* Restore terminal. */
+    if (term_set)
+        (void) tcsetattr(fileno (stream), TCSAFLUSH, &old);
+    return rc;
+}

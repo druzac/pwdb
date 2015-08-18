@@ -54,4 +54,8 @@ pwdb_serialize(struct pwdb *db, int *blen);
 struct pwdb *
 pwdb_deserialize(unsigned char *buf, unsigned int len);
 
+void
+pwdb_print_accnts(struct pwdb *db);
+
+
 #endif

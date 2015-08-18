@@ -1,7 +1,8 @@
 #include <sodium.h>
 #include <string.h>
 #include <stdio.h>
-#include <termios.h>
+
+#include "file_encrypt.h"
 
 #define PASSWORD_MAX_LEN 13
 #define CHUNK_SIZE (1<<14)
@@ -14,8 +15,6 @@
 #define OPSLIMIT crypto_pwhash_scryptsalsa208sha256_OPSLIMIT_INTERACTIVE
 #define MEMLIMIT crypto_pwhash_scryptsalsa208sha256_MEMLIMIT_INTERACTIVE
 
-typedef unsigned char uchar;
-typedef unsigned int uint;
 typedef enum {ENC, DEC} cmd_t;
 
 char header[] = "Params_";
@@ -200,43 +199,6 @@ decrypt(const char *pwd, uint pwd_len, FILE *fin, FILE *fout)
 }
 
 int
-my_getpass(char *pwbuf, int buf_len, FILE *stream)
-{
-    struct termios old, new;
-    int rc, term_set;
-    size_t br;
-
-    rc = -1;
-    term_set = 0;
-
-    /* Turn echoing off and fail if we can't. */
-    if (tcgetattr(fileno (stream), &old) != 0)
-        goto out;
-    new = old;
-    new.c_lflag &= ~ECHO;
-    if (tcsetattr(fileno (stream), TCSAFLUSH, &new) != 0)
-        goto out;
-    term_set = 1;
-    
-    /* Read the password. */
-    if (!fgets(pwbuf, buf_len - 1, stream))
-        goto out;
-
-    br = strlen(pwbuf);
-    if (pwbuf[br - 1] != '\n') {
-        fprintf(stderr, "too many characters in password\n");
-        goto out;
-    }
-    pwbuf[br - 1] = '\0';
-    rc = 0;
- out:
-    /* Restore terminal. */
-    if (term_set)
-        (void) tcsetattr(fileno (stream), TCSAFLUSH, &old);
-    return rc;
-}
-
-int
 encrypt(char *pwd, uint pwd_len, FILE *fin, FILE *fout)
 {
     int rc, flen;
@@ -255,66 +217,66 @@ encrypt(char *pwd, uint pwd_len, FILE *fin, FILE *fout)
     return rc;
 }
 
-int
-main(int argc, char **argv)
-{
-    char pwd[PASSWORD_MAX_LEN], *fname, *fbuf, *cmds;
-    int err, rc;
-    FILE *fd;
-    cmd_t cmd;
+/* int */
+/* main(int argc, char **argv) */
+/* { */
+/*     char pwd[PASSWORD_MAX_LEN], *fname, *fbuf, *cmds; */
+/*     int err, rc; */
+/*     FILE *fd; */
+/*     cmd_t cmd; */
 
-    fd = NULL;
-    fbuf = NULL;
-    rc = -1;
+/*     fd = NULL; */
+/*     fbuf = NULL; */
+/*     rc = -1; */
 
-    if (argc != 3) {
-        printf("usage: <me> <enc|dec> FILE\n");
-        exit(-1);
-    }
-    cmds = argv[1];
-    if (!strncmp(cmds, "enc", 3))
-        cmd = ENC;
-    else if (!strncmp(cmds, "dec", 3))
-        cmd = DEC;
-    else {
-        fprintf(stderr, "invalid command\n");
-        goto out;
-    }
+/*     if (argc != 3) { */
+/*         printf("usage: <me> <enc|dec> FILE\n"); */
+/*         exit(-1); */
+/*     } */
+/*     cmds = argv[1]; */
+/*     if (!strncmp(cmds, "enc", 3)) */
+/*         cmd = ENC; */
+/*     else if (!strncmp(cmds, "dec", 3)) */
+/*         cmd = DEC; */
+/*     else { */
+/*         fprintf(stderr, "invalid command\n"); */
+/*         goto out; */
+/*     } */
 
-    fprintf(stderr, "password:");
-    err = my_getpass(pwd, PASSWORD_MAX_LEN, stdin);
-    fprintf(stderr, "\n");
-    if (err)
-        goto out;
-    fname = argv[2];
-    switch (cmd) {
-    case ENC:
-        fd = fopen(fname, "r");
-        if (!fd) {
-            perror("couldn't open file");
-            exit(-1);
-        }
-        rc = encrypt(pwd, strlen(pwd), fd, stdout);
-        if (rc)
-            fprintf(stderr, "encryption failed\n");
-        break;
-    case DEC:
-        fd = fopen(fname, "r");
-        if (!fd) {
-            perror("couldn't open file");
-            exit(-1);
-        }
-        rc = decrypt(pwd, strlen(pwd), fd, stdout);
-        if (rc)
-            fprintf(stderr, "decryption failed\n");
-        break;
-    default:
-        fprintf(stderr, "how did I get here?\n");
-        break;
-    }
+/*     fprintf(stderr, "password:"); */
+/*     err = my_getpass(pwd, PASSWORD_MAX_LEN, stdin); */
+/*     fprintf(stderr, "\n"); */
+/*     if (err) */
+/*         goto out; */
+/*     fname = argv[2]; */
+/*     switch (cmd) { */
+/*     case ENC: */
+/*         fd = fopen(fname, "r"); */
+/*         if (!fd) { */
+/*             perror("couldn't open file"); */
+/*             exit(-1); */
+/*         } */
+/*         rc = encrypt(pwd, strlen(pwd), fd, stdout); */
+/*         if (rc) */
+/*             fprintf(stderr, "encryption failed\n"); */
+/*         break; */
+/*     case DEC: */
+/*         fd = fopen(fname, "r"); */
+/*         if (!fd) { */
+/*             perror("couldn't open file"); */
+/*             exit(-1); */
+/*         } */
+/*         rc = decrypt(pwd, strlen(pwd), fd, stdout); */
+/*         if (rc) */
+/*             fprintf(stderr, "decryption failed\n"); */
+/*         break; */
+/*     default: */
+/*         fprintf(stderr, "how did I get here?\n"); */
+/*         break; */
+/*     } */
 
- out:
-    fclose(fd);
-    free(fbuf);
-    return rc;
-}
+/*  out: */
+/*     fclose(fd); */
+/*     free(fbuf); */
+/*     return rc; */
+/* } */

@@ -3,6 +3,18 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <fcntl.h>
+
+#include "util.h"
+#include "file_encrypt.h"
+#include "db.h"
+
+
+#define MAX_PASS_LENGTH 64
+
+static char *NO_DB_FILE = "missing db file argument";
+static char *GET_PASS_FAIL = "couldn't get password";
+static char *PASS_PROMPT = "enter db password:";
 
 /* cmdline interface: */
 /* insert password */
@@ -120,35 +132,229 @@ static char doc[] =
 
 static struct argp argp = {options, parse_opt, 0, doc};
 
-/* struct arguments */
-/* { */
-/*     char *user, *domain, *dbfile; */
-/*     bool symbol; */
-/*     int count; */
-/*     cmd_t cmd; */
-/*     /\* char *args[2];                /\\* arg1 & arg2 *\\/ *\/ */
-/*     /\* int silent, verbose; *\/ */
-/*     /\* char *output_file; *\/ */
-/* }; */
+int
+cmd_init(struct arguments *args)
+{
+    /* check args */
+    int rc, fd;
+    FILE *db;
+    char pass[MAX_PASS_LENGTH + 1];
+
+    rc = -1;
+    db = NULL;
+    /* for this, we just need a dbfile arg */
+    if (!args->dbfile) {
+        fprintf(stderr, "%s\n", NO_DB_FILE);
+        goto out;
+    }
+
+    fd = open(args->dbfile, O_CREAT | O_EXCL | O_WRONLY);
+    if (fd == -1) {
+        perror("can't create file");
+        goto out;
+    }
+
+    db = fdopen(fd, "w");
+    if (!db) {
+        fprintf(stderr, "can't create stream\n");
+        goto out;
+    }
+
+    if (get_pass(PASS_PROMPT, pass, MAX_PASS_LENGTH + 1, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
+        goto out;
+    }
+
+    encrypt_file(pass, strlen(pass), (unsigned char*) "", 0, db);
+    rc = 0;
+ out:
+    if (db)
+        fclose(db);
+    return rc;
+}
+
+int
+open_db(const char *dbpath, const char *mode, FILE **db, struct pwdb **pdb, char *pbuf, int pbuflen)
+{
+    FILE *ldb;
+    char *buf;
+    struct pwdb *lpwdb;
+    int rc;
+    unsigned int blen;
+
+    rc = -1;
+    ldb = NULL;
+    buf = NULL;
+
+    if (!dbpath) {
+        fprintf(stderr, "%s\n", NO_DB_FILE);
+        goto out;
+    }
+
+    ldb = fopen(dbpath, mode);
+    if (!db) {
+        perror("couldn't open db");
+        goto out;
+    }
+
+    if (get_pass(PASS_PROMPT, pbuf, pbuflen, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
+        goto out;
+    }
+
+    buf = decrypt_file(pbuf, strlen(pbuf), ldb, &blen);
+    if (!buf) {
+        fprintf(stderr, "couldn't open db\n");
+        goto out;
+    }
+
+    lpwdb = pwdb_deserialize((unsigned char *) buf, blen);
+    if (!lpwdb) {
+        fprintf(stderr, "couldn't deserialize db\n");
+        goto out;
+    }
+
+    *db = ldb;
+    *pdb = lpwdb;
+    rc = 0;
+
+ out:
+    if (rc)
+        fclose(ldb);
+    free(buf);
+    return rc;
+}
+
+
+/* XXX */
+/* should specialize these arguments */
+int
+cmd_list(struct arguments *args)
+{
+    int rc;
+    FILE *db;
+    struct pwdb *pdb;
+    char pass[MAX_PASS_LENGTH + 1];
+    
+    rc = -1;
+    db = NULL;
+
+    if (open_db(args->dbfile, "r", &db, &pdb, pass, sizeof(pass)/sizeof(*pass)))
+        goto out;
+    
+    pwdb_print_accnts(pdb);
+
+    rc = 0;
+ out:
+    if (db)
+        fclose(db);
+    return rc;
+}
+
+int
+cmd_insert(struct arguments *args)
+{
+    int rc;
+    FILE *db, *tmpf;
+    struct pwdb *pdb;
+    char master_pass[MAX_PASS_LENGTH + 1];
+    char new_pass[MAX_PASS_LENGTH + 1];
+    char tmpfile[] = "/tmp/dbXXXXXXX";
+    unsigned int plen;
+    unsigned char *buf;
+    int blen, tmpfd;
+
+
+    rc = -1;
+    db = NULL;
+
+    if (!args->user || !args->domain) {
+        fprintf(stderr, "missing arguments for insert\n");
+        goto out;
+    }
+
+    if (open_db(args->dbfile, "r+", &db, &pdb, master_pass, sizeof(master_pass)/sizeof(*master_pass)))
+        goto out;
+
+    fclose(db);
+    if (get_pass("enter password for account:",
+                 new_pass,
+                 sizeof(new_pass)/sizeof(*new_pass),
+                 stdin))
+        goto out;
+
+    if (pwdb_insert(pdb, args->user, args->domain, new_pass)) {
+        fprintf(stderr, "failed to insert into db\n");
+        goto out;
+    }
+
+    if (!(buf = pwdb_serialize(pdb, &blen))) {
+        fprintf(stderr, "couldn't serialize\n");
+        goto out;
+    }
+
+    tmpfd = mkstemp(tmpfile);
+    if (tmpfd == -1) {
+        fprintf(stderr, "couldn't open tmp file\n");
+        goto out;
+    }
+
+    tmpf = fdopen(tmpfd, "w");
+    if (!tmpf) {
+        fprintf(stderr, "couldn't streamify tmpfile\n");
+        goto out;
+    }
+
+    if (encrypt_file(master_pass, strlen(master_pass), buf, blen, tmpf)) {
+        fprintf(stderr, "couldn't encrypt to tmp file\n");
+        goto out;
+    }
+
+    fclose(tmpf);
+    rename(tmpfile, args->dbfile);
+    /* if (encrypt_file( */
+    rc = 0;
+ out:
+    if (db)
+        fclose(db);
+
+    return rc;
+}
+
+int
+cmd_retrieve(struct arguments *args)
+{
+    int rc;
+
+    rc = -1;
+
+    return rc;
+}
 
 int
 main(int argc, char **argv)
 {
     struct arguments args;
+    int rc;
+
+    rc = -1;
     memset(&args, 0, sizeof(args));
     argp_parse(&argp, argc, argv, 0, 0, &args);
-    printf("args:\n"
-           "user: %s\n"
-           "domain: %s\n"
-           "dbfile: %s\n"
-           "count: %d\n"
-           "cmd: %d\n",
-           args.user ?: "",
-           args.domain ?: "",
-           args.dbfile ?: "",
-           args.count,
-           args.cmd);
+    switch (args.cmd) {
+    case CMD_INIT:
+        rc = cmd_init(&args);
+        break;
+    case CMD_LIST:
+        rc = cmd_list(&args);
+        break;
+    case CMD_INSERT:
+        rc = cmd_insert(&args);
+        break;
+    default:
+        fprintf(stderr, "invalid command\n");
+        goto out;
+    }
 
-    
-    exit(0);
+ out:
+    exit(rc);
 }
