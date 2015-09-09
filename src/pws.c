@@ -15,8 +15,14 @@
 
 #define TYPE_VERSION 0x00
 #define TYPE_UUID    0x01
+#define TYPE_EOE     0xff
 
 #define VERSION 0x0310
+
+/* any typeof on android + ios? */
+
+/* this is defined in tomcrypt_macros */
+/* #define MIN(a, b) (((a) < (b)) ? (a) : (b)) */
 
 struct db_header {
     short version;
@@ -54,7 +60,7 @@ read_le_uint32(unsigned char *buf)
     return buf[0] | buf[1] << 8 | buf[2] << 16 | buf[3] << 24;
 }
 
-unsigned int
+unsigned short
 read_le_uint16(unsigned char *buf)
 {
     return buf[0] | buf[1] << 8;
@@ -145,6 +151,20 @@ decrypt_key(unsigned char *key, unsigned char *ct, unsigned char *out)
     return rc;
 }
 
+/* cut down on code duplication
+   
+   */
+static
+int
+__read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned char buf)
+{
+    int rc;
+
+    rc = -1;
+
+    return rc;
+}
+
 static
 int
 read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
@@ -152,10 +172,13 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
     unsigned char cbuf[BLOCK_LEN];
     unsigned char pbuf[BLOCK_LEN];
     unsigned char *field_data;
+    unsigned char field_type;
     unsigned int field_len;
+    int rem_bytes;
     int rc;
 
     rc = -1;
+    field_data = NULL;
     /* if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) { */
     if (fread(cbuf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
         printf("failed to read a block\n");
@@ -167,13 +190,9 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
         goto out;
     }
 
-    /* TODO read arbitrary length data (i.e. in more than one block) */
     field_len = read_le_uint32(pbuf);
-
-    if (field_len > 11) {
-        printf("oops, not implemented yet\n");
-        goto out;
-    }
+    field_type = pbuf[4];
+    /* printf("sanity: field len is %d, type is: 0x%x\n", field_len, pbuf[4]); */
 
     field_data = malloc(field_len);
     if (!field_data) {
@@ -181,11 +200,29 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
         goto out;
     }
 
+    memcpy(field_data, pbuf + 5, MIN(field_len, 11));
+    rem_bytes = field_len - 11;
+
+    while (rem_bytes > 0) {
+        printf("entering loop, going to transfer: %d bytes to position: %d\n", MIN(rem_bytes, 16), field_len - rem_bytes);
+        if (fread(cbuf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
+            printf("failed to read a block\n");
+            goto out;
+        }
+
+        if (cbc_decrypt(cbuf, pbuf, BLOCK_LEN, symkey) != CRYPT_OK) {
+            printf("failed to decrypt\n");
+            goto out;
+        }
+
+        memcpy(field_data + (field_len - rem_bytes), pbuf, MIN(rem_bytes, 16));
+        rem_bytes = rem_bytes - 16;
+    }
+
     rc = 0;
-    memcpy(field_data, pbuf + 5, field_len);
-    field->data = field_data;
     field->len = field_len;
-    field->type = pbuf[4];
+    field->type = field_type;
+    field->data = field_data;
  out:
     if (rc)
         free(field_data);
@@ -197,33 +234,110 @@ int
 read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
 {
     int rc;
-    struct field field;
-    int version;
+    struct field *field, *fields_head;
+    short version;
 
     rc = -1;
-    if (read_field(dbf, sym, &field)) {
+
+    fields_head = malloc(sizeof(*fields_head));
+    if (!fields_head) {
+        printf("malloc failed\n");
+        goto out;
+    }
+
+    memset(fields_head, 0, sizeof(*fields_head));
+
+    if (read_field(dbf, sym, fields_head)) {
         printf("got some kind of problem\n");
         goto out;
     }
 
     /* we're expecting the first field to be the version */
-    if (field.type != TYPE_VERSION) {
+    if (fields_head->type != TYPE_VERSION) {
         printf("bad format\n");
         goto out;
     }
 
-    version = read_le_uint16(field.data);
+    version = read_le_uint16(fields_head->data);
     printf("version: 0x%x\n", version);
     if (version > VERSION) {
         printf("version is beyond me\n");
+        goto out;
     }
 
+    fields_head->prev = fields_head->next = fields_head;
+    printf("what the beef\n");
     printf("field length: %u, field type: 0x%x, field data: %.*s\n",
-           field.len, field.type, field.len, field.data);
+           fields_head->len, fields_head->type, fields_head->len, fields_head->data);
 
+    do {
+        field = malloc(sizeof(*field));
+        if (!field) {
+            printf("malloc failed\n");
+            goto out;
+        }
+        
+        if (read_field(dbf, sym, field)) {
+            printf("failed to read a field\n");
+            free(field);
+            goto out;
+        }
+
+        fields_head->prev->next = field;
+        field->prev = fields_head->prev;
+        field->next = fields_head;
+        fields_head->prev = field;
+        printf("field length: %u, field type: 0x%x, field data: %.*s\n",
+               field->len, field->type, field->len, field->data);
+        /* if it's the terminator field, we're done -> exit */
+    } while (field->type != TYPE_EOE);
+
+    /* check i did the llist stuff right */
+    struct field *curr;
+    curr = fields_head;
+    printf("doing loop biz\n");
+    do {
+        printf("field length: %u, field type: 0x%x, field data: %.*s\n",
+               curr->len, curr->type, curr->len, curr->data);
+        curr = curr->next;
+    } while (curr != fields_head);
     rc = 0;
+    dbh->version = version;
+    dbh->fields = fields_head;
  out:
+    if (rc) {
+        /* TODO free the memory allocated for fields */
+    }
     return rc;
+}
+
+/* we need to do a cut and paste */
+static
+int
+read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
+{
+    int rc;
+
+    /* TODO */
+    rc = -1;
+
+
+    return rc;
+}
+
+static
+int
+read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
+{
+    struct record *records_head;
+    struct record *record;
+    int rc;
+
+    /* TODO */
+    rc = -1;
+
+    return rc;
+
 }
 
 static
@@ -250,11 +364,15 @@ read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
         printf("problem reading header\n");
         goto out;
     }
-        
+
+    if (read_db_records(dbf, &symcbc, &db)) {
+        printf("problem reading db records\n");
+        goto out;
+    }
 
     /* if ((err = cbc_decrypt(ct, dec_pt, 32, &dec_symcbc)) != CRYPT_OK) { */
+    /* TODO  */
 
-    
     /* when you're done reading everything... */
     cbc_done(&symcbc);
  out:
