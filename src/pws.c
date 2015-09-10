@@ -11,6 +11,7 @@
 #define SALT_LEN 32
 #define KEY_LEN 32
 #define BLOCK_LEN 16
+#define DIGEST_LEN 32
 
 #define TYPE_VERSION 0x00
 #define TYPE_UUID    0x01
@@ -41,7 +42,8 @@ struct db_header {
 };
 
 struct record {
-    unsigned char *uuid; /* N. B. this is a pointer into one of the fields */
+    unsigned char *uuid; /* N. B. this is a pointer into one of the fields
+                            do not free */
     char *title;
     char *password;
     struct field *fields;
@@ -547,6 +549,75 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
 }
 
 static
+int
+verify_db(struct db *db, unsigned char *digest_key, unsigned char *file_digest)
+{
+    int rc;
+    hmac_state hmac;
+    int hashfcn;
+    struct field *field;
+    struct record *record;
+    unsigned char my_digest[DIGEST_LEN];
+    unsigned long dlen;
+
+    dlen = DIGEST_LEN;
+
+    if ((hashfcn = register_hash(&sha256_desc)) == -1) {
+        printf("couldn't register hash\n");
+        goto out;
+    }
+
+    if (hmac_init(&hmac, hashfcn, digest_key, KEY_LEN) != CRYPT_OK) {
+        printf("couldn't init digest\n");
+        goto out;
+    }
+
+    field = db->header.fields;
+    /* must have the version at least */
+    do {
+        if (hmac_process(&hmac, field->data, field->len) != CRYPT_OK) {
+            printf("couldn't hash field\n");
+            goto out;
+        }
+        field = field->next;
+    } while (field != db->header.fields);
+
+    record = db->records;
+    if (record) {
+        do {
+            field = record->fields;
+            do {
+                if (hmac_process(&hmac, field->data, field->len) != CRYPT_OK) {
+                    printf("couldn't hash field\n");
+                    goto out;
+                }
+                field = field->next;
+            } while (field != record->fields);
+            record = record->next;
+        } while (record != db->records);
+    }
+
+    if (hmac_done(&hmac, my_digest, &dlen) != CRYPT_OK) {
+        printf("couldn't finish digest\n");
+        goto out;
+    }
+
+    if (dlen != DIGEST_LEN) {
+        printf("what the beef, dlen got changed\n");
+        goto out;
+    }
+
+    if (memcmp(my_digest, file_digest, DIGEST_LEN)) {
+        printf("digests are different!\n");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    return !rc;
+}
+
+static
 struct db *
 read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
 {
@@ -593,15 +664,16 @@ read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
 struct db *
 read_pwsdb(FILE *dbf, char *pw) {
     int err, rc;
-    char tagbuf[PWS_TAG_LEN];
-    unsigned char salt[SALT_LEN];
-    unsigned char iterbuf[4];
     unsigned int iter;
-    unsigned char pw_key[KEY_LEN];
-    unsigned char hashed_pw_key[KEY_LEN];
-    unsigned char db_key[KEY_LEN];
-    unsigned char digest_key[KEY_LEN];
-    unsigned char iv[BLOCK_LEN];
+    char tagbuf[PWS_TAG_LEN];
+    unsigned char salt[SALT_LEN],
+        iterbuf[4],
+        pw_key[KEY_LEN],
+        hashed_pw_key[KEY_LEN],
+        db_key[KEY_LEN],
+        digest_key[KEY_LEN],
+        iv[BLOCK_LEN],
+        file_digest[DIGEST_LEN];
     struct db *db;
 
     rc = -1;
@@ -666,12 +738,23 @@ read_pwsdb(FILE *dbf, char *pw) {
     if (!db)
         goto out;
 
-    /* TODO
-       hash all the fields to check the HMAC
-       */
+    if (fread(file_digest, DIGEST_LEN, 1, dbf) < 1) {
+        printf("couldn't read digest\n");
+        goto out;
+    }
+
+    if (!verify_db(db, digest_key, file_digest)) {
+        printf("couldn't verify db\n");
+        goto out;
+    }
 
     rc = 0;
  out:
+    if (rc) {
+        destroy_db(db);
+        free(db);
+        db = NULL;
+    }
     return db;
 }
 
