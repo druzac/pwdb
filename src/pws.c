@@ -16,6 +16,14 @@
 #define TYPE_UUID    0x01
 #define TYPE_EOE     0xff
 
+/* mandatory record fields:
+   UUID
+   password
+   title
+   */
+#define TYPE_TITLE      0x03
+#define TYPE_PASSWORD   0x06
+
 #define VERSION 0x0310
 
 #define RECORDS_EOF_SENTINEL "PWS3-EOFPWS3-EOF"
@@ -32,11 +40,8 @@ struct db_header {
     struct field *fields;
 };
 
-struct UUID {
-};
-
 struct record {
-    struct UUID uuid;
+    unsigned char *uuid; /* N. B. this is a pointer into one of the fields */
     char *title;
     char *password;
     struct field *fields;
@@ -57,11 +62,78 @@ struct db {
     struct record *records;
 };
 
+/* the behaviour here is undefined if the db is invalid */
 void
-free_fields(struct field *field)
+print_db(struct db *db)
 {
-    if (field) {
-        /* TODO free the linked list */
+    struct field *field, *fields_head;
+    struct record *record, *records_head;
+    printf("version: 0x%x\n", db->header.version);
+
+    fields_head = db->header.fields;
+    field = fields_head;
+
+    do {
+        printf("db header field:\n  length: %u, field type: 0x%x, field data: %.*s\n",
+               field->len, field->type, field->len, field->data);
+        field = field->next;
+    } while (field != fields_head);
+
+    records_head = db->records;
+    record = records_head;
+    if (record) {
+        do {
+            printf("record:\n  title: %s\n  password: %s\n",
+                   record->title, record->password);
+            record = record->next;
+        } while (record != records_head);
+    }
+}
+
+void
+free_fields(struct field *fields_head)
+{
+    struct field *curr, *next;
+    curr = fields_head;
+
+    while (next != fields_head) {
+        next = curr->next;
+        free(curr->data);
+        curr = next;
+    }
+}
+
+/* doesn't free the whole list */
+void
+destroy_record(struct record *record)
+{
+    if (record) {
+        free(record->title);
+        free(record->password);
+        free_fields(record->fields);
+    }
+}
+
+void
+free_records(struct record *records_head)
+{
+    struct record *curr, *next;
+    curr = records_head;
+
+    while (next != records_head) {
+        next = curr->next;
+        destroy_record(curr);
+        free(curr);
+        curr = next;
+    }
+}
+
+void
+destroy_db(struct db *db)
+{
+    if (db) {
+        free_fields(db->header.fields);
+        free_records(db->records);
     }
 }
 
@@ -101,7 +173,6 @@ keystretch(const char *pw,
     }
 
     memcpy(out, buf, 32);
-    printf("keystretch is done\n");
     rc = 0;
  out:
     return rc;
@@ -186,7 +257,6 @@ __read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned cha
 
     field_len = read_le_uint32(buf);
     field_type = buf[4];
-    /* printf("sanity: field len is %d, type is: 0x%x\n", field_len, buf[4]); */
 
     field_data = malloc(field_len);
     if (!field_data) {
@@ -197,18 +267,8 @@ __read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned cha
     memcpy(field_data, buf + 5, MIN(field_len, 11));
     rem_bytes = field_len - 11;
 
-    /* if (rem_bytes > 0) { */
-    /*     int num_blocks; */
-
-    /*     num_blocks = rem_bytes / 16 + (!(rem_bytes % 16)); */
-    /*     printf("rem bytes: %d, num_blocks: %d\n", num_blocks, rem_bytes); */
-    /*     if (fread(buf, BLOCK_LEN, num_blocks, dbf) < num_blocks) { */
-    /*     } */
-    /* } */
-
     /* TODO should probably replace this with a bulk read, bulk decrypt */
     while (rem_bytes > 0) {
-        printf("entering loop, going to transfer: %d bytes to position: %d\n", MIN(rem_bytes, 16), field_len - rem_bytes);
         if (fread(buf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
             printf("failed to read a block\n");
             goto out;
@@ -240,7 +300,6 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
     unsigned char buf[BLOCK_LEN];
     int rc;
 
-    /* if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) { */
     if (fread(buf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
         printf("failed to read a block\n");
         goto out;
@@ -255,67 +314,6 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
  out:
     return rc;
 }
-    
- /*    unsigned char cbuf[BLOCK_LEN]; */
- /*    unsigned char pbuf[BLOCK_LEN]; */
- /*    unsigned char *field_data; */
- /*    unsigned char field_type; */
- /*    unsigned int field_len; */
- /*    int rem_bytes; */
- /*    int rc; */
-
- /*    rc = -1; */
- /*    field_data = NULL; */
- /*    /\* if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) { *\/ */
- /*    if (fread(cbuf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) { */
- /*        printf("failed to read a block\n"); */
- /*        goto out; */
- /*    } */
-
- /*    if (cbc_decrypt(cbuf, pbuf, BLOCK_LEN, symkey) != CRYPT_OK) { */
- /*        printf("failed to decrypt a block\n"); */
- /*        goto out; */
- /*    } */
-
- /*    field_len = read_le_uint32(pbuf); */
- /*    field_type = pbuf[4]; */
- /*    /\* printf("sanity: field len is %d, type is: 0x%x\n", field_len, pbuf[4]); *\/ */
-
- /*    field_data = malloc(field_len); */
- /*    if (!field_data) { */
- /*        printf("OOM\n"); */
- /*        goto out; */
- /*    } */
-
- /*    memcpy(field_data, pbuf + 5, MIN(field_len, 11)); */
- /*    rem_bytes = field_len - 11; */
-
- /*    /\* should probably replace this with a bulk read, bulk decrypt *\/ */
- /*    while (rem_bytes > 0) { */
- /*        printf("entering loop, going to transfer: %d bytes to position: %d\n", MIN(rem_bytes, 16), field_len - rem_bytes); */
- /*        if (fread(cbuf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) { */
- /*            printf("failed to read a block\n"); */
- /*            goto out; */
- /*        } */
-
- /*        if (cbc_decrypt(cbuf, pbuf, BLOCK_LEN, symkey) != CRYPT_OK) { */
- /*            printf("failed to decrypt\n"); */
- /*            goto out; */
- /*        } */
-
- /*        memcpy(field_data + (field_len - rem_bytes), pbuf, MIN(rem_bytes, 16)); */
- /*        rem_bytes = rem_bytes - 16; */
- /*    } */
-
- /*    rc = 0; */
- /*    field->len = field_len; */
- /*    field->type = field_type; */
- /*    field->data = field_data; */
- /* out: */
- /*    if (rc) */
- /*        free(field_data); */
- /*    return rc; */
-/* } */
 
 static
 int
@@ -333,23 +331,16 @@ read_rest_fields(FILE *dbf, symmetric_CBC *sym, struct field *fields_head)
             goto out;
         }
 
-        printf("read_rest_fields: calling read_field\n");
         if (read_field(dbf, sym, field)) {
             printf("failed to read a field\n");
             free(field);
             goto out;
         }
-        printf("doing pointer junk\n");
 
         fields_head->prev->next = field;
-        printf("did first head pointer\n");
         field->prev = fields_head->prev;
         field->next = fields_head;
         fields_head->prev = field;
-        printf("did last head pointer\n");
-        printf("field length: %u, field type: 0x%x, field data: %.*s\n",
-               field->len, field->type, field->len, field->data);
-        /* if it's the terminator field, we're done -> exit */
     } while (field->type != TYPE_EOE);
 
     rc = 0;
@@ -377,9 +368,12 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
 
     if (read_field(dbf, sym, fields_head)) {
         printf("got some kind of problem\n");
+        free(fields_head);
         goto out;
     }
 
+    fields_head->prev = fields_head->next = fields_head;
+    dbh->fields = fields_head;
     /* we're expecting the first field to be the version */
     if (fields_head->type != TYPE_VERSION) {
         printf("bad format\n");
@@ -387,64 +381,20 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
     }
 
     version = read_le_uint16(fields_head->data);
-    printf("version: 0x%x\n", version);
     if (version > VERSION) {
         printf("version is beyond me\n");
         goto out;
     }
 
-    fields_head->prev = fields_head->next = fields_head;
-    printf("what the beef\n");
-    printf("field length: %u, field type: 0x%x, field data: %.*s\n",
-           fields_head->len, fields_head->type, fields_head->len, fields_head->data);
-
     if (read_rest_fields(dbf, sym, fields_head))
         goto out;
-    /* do { */
-    /*     field = malloc(sizeof(*field)); */
-    /*     if (!field) { */
-    /*         printf("malloc failed\n"); */
-    /*         goto out; */
-    /*     } */
-        
-    /*     if (read_field(dbf, sym, field)) { */
-    /*         printf("failed to read a field\n"); */
-    /*         free(field); */
-    /*         goto out; */
-    /*     } */
 
-    /*     fields_head->prev->next = field; */
-    /*     field->prev = fields_head->prev; */
-    /*     field->next = fields_head; */
-    /*     fields_head->prev = field; */
-    /*     printf("field length: %u, field type: 0x%x, field data: %.*s\n", */
-    /*            field->len, field->type, field->len, field->data); */
-    /*     /\* if it's the terminator field, we're done -> exit *\/ */
-    /* } while (field->type != TYPE_EOE); */
-
-    /* check i did the llist stuff right */
-    /* TODO this is temporary */
-    struct field *curr;
-    curr = fields_head;
-    printf("doing loop biz\n");
-    do {
-        printf("field length: %u, field type: 0x%x, field data: %.*s\n",
-               curr->len, curr->type, curr->len, curr->data);
-        curr = curr->next;
-    } while (curr != fields_head);
     rc = 0;
     dbh->version = version;
-    dbh->fields = fields_head;
  out:
-    if (rc) {
-        /* TODO free the memory allocated for fields */
-    }
     return rc;
 }
 
-/* XXX
-   gotta hope EOF is never 0
-   */
 static
 int
 read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
@@ -453,16 +403,19 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
     unsigned char buf[BLOCK_LEN];
     struct field *fields_head;
     struct field *field;
+    char valid_mask;
 
-    rc = -1;
-    fields_head = field = NULL;
+    rc = RECORDS_ERR;
+    fields_head = NULL;
+    memset(rec, 0, sizeof(*rec));
+    valid_mask = 0;
 
     if (fread(buf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
         printf("failed to read a block\n");
         goto out;
     }
 
-    /* test */
+    /* test for EOF */
     if (!strncmp((char *) buf, RECORDS_EOF_SENTINEL, BLOCK_LEN)) {
         rc = RECORDS_EOF;
         goto out;
@@ -475,39 +428,58 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
         goto out;
     }
     fields_head->next = fields_head->prev = fields_head;
+    /* save now so we can free later */
+    rec->fields = fields_head;
 
-    printf("calling special __read_field\n");
     if (__read_field(dbf, symcbc, fields_head, buf)) {
         printf("__read_field failed\n");
         goto out;
     }
 
-    printf("checking type\n");
     if (fields_head->type == TYPE_EOE) {
         printf("read_db_record: invalid record, too early EOE\n");
         goto out;
     }
 
-    printf("reading the rest of the fields\n");
     if (read_rest_fields(dbf, symcbc, fields_head)) {
         printf("couldn't read remaining fields\n");
         goto out;
     }
 
-    struct field *curr;
-    curr = fields_head;
-    printf("doing loop biz in record read\n");
+    /* validate the record */
+    field = fields_head;
     do {
-        printf("field length: %u, field type: 0x%x, field data: %.*s\n",
-               curr->len, curr->type, curr->len, curr->data);
-        curr = curr->next;
-    } while (curr != fields_head);
+        switch (field->type) {
+        case TYPE_UUID:
+            rec->uuid = field->data;
+            valid_mask |= (1 << 0);
+            break;
+        case TYPE_TITLE:
+            rec->title = strndup((char *)field->data, field->len);
+            if (!rec->title)
+                goto out;
+            valid_mask |= (1 << 1);
+            break;
+        case TYPE_PASSWORD:
+            rec->password = strndup((char *)field->data, field->len);
+            if (!rec->password)
+                goto out;
+            valid_mask |= (1 << 2);
+            break;
+        }
+        field = field->next;
+    } while (field != fields_head && valid_mask != 7);
 
-    rec->fields = fields_head;
+    if (valid_mask != 7) {
+        printf("record is missing required fields, mask value: %d\n", valid_mask);
+        goto out;
+    }
+
+    rc = 0;
  out:
     if (rc)
-        free_fields(fields_head);
- 
+        destroy_record(rec);
+
     return rc;
 }
 
@@ -516,33 +488,62 @@ int
 read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
 {
     struct record *records_head;
-    struct record *record;
+
     int rc, err;
 
-    printf("entering read records stuff\n");
-    /* TODO */
     rc = -1;
 
-    record = malloc(sizeof(*record));
-    if (!record) {
+    records_head = malloc(sizeof(*records_head));
+    if (!records_head) {
         printf("oom\n");
         goto out;
     }
 
-    err = read_db_record(dbf, symcbc, record);
+    err = read_db_record(dbf, symcbc, records_head);
     
     if (err == RECORDS_ERR) {
         printf("err reading record\n");
+        free(records_head);
         goto out;
     }
+
     if (err == RECORDS_EOF) {
-        printf("done reading records\n");
+        /* we're done */
+        free(records_head);
+        db->records = NULL;
+    } else { 
+        records_head->next = records_head->prev = records_head;
+        db->records = records_head;
+        do {
+            struct record *record;
+
+            record = malloc(sizeof(*record));
+            if (!record) {
+                printf("oom\n");
+                goto out;
+            }
+
+            err = read_db_record(dbf, symcbc, record);
+            if (err == RECORDS_ERR) {
+                free(record);
+                goto out;
+            }
+            if (err == RECORDS_EOF) {
+                free(record);
+            } else {
+                records_head->prev->next = record;
+                record->prev = records_head->prev;
+                records_head->prev = record;
+                record->next = records_head;
+            }
+        } while (err != RECORDS_EOF);
     }
 
     rc = 0;
  out:
+    /* no cleanup here - let read_db destroy the whole database if
+       necessary */
     return rc;
-
 }
 
 static
@@ -550,41 +551,46 @@ struct db *
 read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
 {
     symmetric_CBC symcbc;
-    int twofish;
-    struct db db;
+    int twofish, rc;
+    struct db *db;
 
-    /* read header */
-    /* then read all records - loop */
-    /* we know records are done when we hit the record list sentinel */
+    rc = -1;
+    db = NULL;
 
-    
     if ((twofish = register_cipher(&twofish_desc)) == -1) {
         printf("can't register twofish alg\n");
         goto out;
     }
 
+    db = malloc(sizeof(*db));
+    if (!db)
+        goto out;
+
     cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc);
 
-    if (read_db_header(dbf, &symcbc, &db.header)) {
+    if (read_db_header(dbf, &symcbc, &db->header)) {
         printf("problem reading header\n");
-        goto out;
+        goto dereg_cipher;
     }
 
-    if (read_db_records(dbf, &symcbc, &db)) {
+    if (read_db_records(dbf, &symcbc, db)) {
         printf("problem reading db records\n");
-        goto out;
+        goto dereg_cipher;
     }
 
-    /* if ((err = cbc_decrypt(ct, dec_pt, 32, &dec_symcbc)) != CRYPT_OK) { */
-    /* TODO  */
-
-    /* when you're done reading everything... */
+    rc = 0;
+ dereg_cipher:
     cbc_done(&symcbc);
  out:
-    return NULL;
+    if (rc) {
+        destroy_db(db);
+        free(db);
+        db = NULL;
+    }
+    return db;
 }
 
-int
+struct db *
 read_pwsdb(FILE *dbf, char *pw) {
     int err, rc;
     char tagbuf[PWS_TAG_LEN];
@@ -599,6 +605,7 @@ read_pwsdb(FILE *dbf, char *pw) {
     struct db *db;
 
     rc = -1;
+    db = NULL;
     
     if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) {
         printf("failed to read tag\n");
@@ -621,8 +628,6 @@ read_pwsdb(FILE *dbf, char *pw) {
     }
 
     iter = read_le_uint32(iterbuf);
-    /* iter = iterbuf[0] | iterbuf[1] << 8 | iterbuf[2] << 16 | iterbuf[3] << 24; */
-    printf("iter is: %d\n", iter);
     if (fread(hashed_pw_key, 1, 32, dbf) < 32) {
         printf("failed to read hashed key\n");
         goto out;
@@ -661,10 +666,13 @@ read_pwsdb(FILE *dbf, char *pw) {
     if (!db)
         goto out;
 
-    printf("all good\n");
+    /* TODO
+       hash all the fields to check the HMAC
+       */
+
     rc = 0;
  out:
-    return rc;
+    return db;
 }
 
 int
@@ -673,6 +681,7 @@ main(int argc, char **argv)
     if (argc == 3) {
         char *dbpath, *pw;
         FILE *dbf;
+        struct db *db;
 
         dbpath = argv[1];
         pw = argv[2];
@@ -680,7 +689,12 @@ main(int argc, char **argv)
         if (!dbf) {
             printf("failed to open file\n");
         } else {
-            read_pwsdb(dbf, pw);
+            db = read_pwsdb(dbf, pw);
+            if (db) {
+                print_db(db);
+                destroy_db(db);
+                free(db);
+            }
         }
     }
 }
