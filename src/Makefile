@@ -24,7 +24,7 @@ file_encrypt.o: file_encrypt.c file_encrypt.h
 .PHONY: clean
 
 pws_test: pws.c
-	gcc -o pws_test pws.c -Llibs -ltomcrypt -Iltc_headers
+	gcc -g -o pws_test pws.c -Llibs -ltomcrypt -Iltc_headers
 
 clean:
 	rm -f *.o pwdb

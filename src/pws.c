@@ -12,6 +12,7 @@
 #define KEY_LEN 32
 #define BLOCK_LEN 16
 #define DIGEST_LEN 32
+#define ITER_BYTES 4
 
 #define TYPE_VERSION 0x00
 #define TYPE_UUID    0x01
@@ -63,6 +64,69 @@ struct db {
     struct db_header header;
     struct record *records;
 };
+
+struct rand_state {
+    FILE *rdev;
+};
+
+void
+print_bytes(unsigned char *buf, int buflen)
+{
+    int i;
+    for (i = 0; i < buflen; i++) {
+        printf("\\x%02x", buf[i]);
+    }
+    printf("\n");
+}
+
+int
+init_random(struct rand_state *rs)
+{
+    FILE *f;
+    int rc;
+
+    rc = -1;
+    if (!(f = fopen("/dev/urandom", "r"))) {
+        perror("init_random");
+        goto out;
+    }
+
+    rc = 0;
+    rs->rdev = f;
+ out:
+    return rc;
+}
+
+int
+get_random_bytes(struct rand_state *rs, unsigned char *buf, int buflen)
+{
+    int rc;
+
+    rc = -1;
+    if ((fread(buf, 1, buflen, rs->rdev)) < buflen) {
+        perror("get_random_bytes");
+        goto out;
+    }
+    rc = 0;
+ out:
+    return rc;
+}
+
+int
+done_random(struct rand_state *rs)
+{
+    int rc;
+
+    rc = -1;
+    if (fclose(rs->rdev)) {
+        perror("done_random");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    return rc;
+}
 
 /* the behaviour here is undefined if the db is invalid */
 void
@@ -151,6 +215,42 @@ read_le_uint16(unsigned char *buf)
     return buf[0] | buf[1] << 8;
 }
 
+void
+write_le_uint16(unsigned short n, unsigned char *buf)
+{
+    buf[0] = n & 0xff;
+    buf[1] = (n >>= 8) & 0xff;
+}
+
+void
+write_le_uint32(unsigned int n, unsigned char *buf)
+{
+    buf[0] = n & 0xff;
+    buf[1] = (n >>= 8) & 0xff;
+    buf[2] = (n >>= 8) & 0xff;
+    buf[3] = (n >>= 8) & 0xff;
+}
+
+int
+sha256_once(const unsigned char *buf, unsigned int buf_len, unsigned char *out)
+{
+    /* TODO
+       check error codes here
+       */
+    int rc;
+    hash_state md;
+
+    sha256_init(&md);
+    sha256_process(&md, buf, buf_len);
+    sha256_done(&md, out);
+
+    rc = -1;
+
+    rc = 0;
+ out:
+    return rc;
+}
+
 /* pw is a C-string - null terminated  */
 int
 keystretch(const char *pw,
@@ -195,6 +295,46 @@ check_pass(unsigned char *mkey, unsigned char *hkey)
     sha256_done(&md, myhkey);
 
     return (!memcmp(myhkey, hkey, 32));
+}
+
+int
+write_key(unsigned char *eckey, unsigned char *keybuf, FILE *f)
+{
+    symmetric_key skey;
+    int rc, err;
+    unsigned char buf[BLOCK_LEN * 2];
+
+    rc = -1;
+    memset(&skey, 0, sizeof(skey));
+
+    err = twofish_setup(eckey, KEY_LEN, 0, &skey);
+    if (err != CRYPT_OK) {
+        printf("write_key: failed to setup\n");
+        goto out;
+    }
+
+
+    if ((err = twofish_ecb_encrypt(keybuf, buf, &skey)) != CRYPT_OK) {
+        printf("write_key: first encrypt failed\n");
+        goto out;
+    }
+
+    if ((err = twofish_ecb_encrypt(keybuf + BLOCK_LEN,
+                                   buf + BLOCK_LEN,
+                                   &skey)) != CRYPT_OK) {
+        printf("write_key: second encrypt failed\n");
+        goto out;
+    }
+
+    if (fwrite(buf, BLOCK_LEN * 2, 1, f) < 1) {
+        printf("write_key: write failed\n");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    twofish_done(&skey);
+    return rc;
 }
 
 /* ct is a pointer to two blocks which contain a key
@@ -311,6 +451,77 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
         printf("__read_field failed\n");
         goto out;
     }
+
+    rc = 0;
+ out:
+    return rc;
+}
+
+static
+int
+write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE *f)
+{
+    int rc, total_cnt, curr_cnt;
+    unsigned char buf[BLOCK_LEN];
+
+    rc = -1;
+
+    write_le_uint32(field->len, buf);
+    buf[4] = field->type;
+    curr_cnt = MIN(field->len, BLOCK_LEN - 5);
+    memcpy(buf + 5, field->data, curr_cnt);
+    if (curr_cnt + 5 < BLOCK_LEN) {
+        get_random_bytes(rs, buf + 5 + curr_cnt, BLOCK_LEN - (curr_cnt + 5));
+    }
+    if (cbc_encrypt(buf, buf, BLOCK_LEN, ec) != CRYPT_OK) {
+        printf("write_field: first encrypt failed\n");
+        goto out;
+    }
+
+    if (fwrite(buf, BLOCK_LEN, 1, f) < 1) {
+        printf("failed to write first block\n");
+        goto out;
+    }
+    total_cnt = curr_cnt;
+    while (total_cnt < field->len) {
+        curr_cnt = MIN(field->len - total_cnt, BLOCK_LEN);
+        memcpy(buf, field->data + total_cnt, curr_cnt);
+        if (curr_cnt < BLOCK_LEN) {
+            get_random_bytes(rs, buf + curr_cnt, BLOCK_LEN - curr_cnt);
+        }
+        if (cbc_encrypt(buf, buf, BLOCK_LEN, ec) != CRYPT_OK) {
+            printf("write_field: encrypt failed\n");
+            goto out;
+        }
+        if (fwrite(buf, BLOCK_LEN, 1, f) < 1) {
+            printf("failed to write a block\n");
+            goto out;
+        }
+        total_cnt += curr_cnt;
+    }
+
+    rc = 0;
+ out:
+    return rc;
+}
+
+static
+int
+write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs, FILE *f)
+{
+    int rc;
+    struct field *field;
+
+    rc = -1;
+    field = field_head;
+
+    do {
+        if (write_field(field, ec, rs, f)) {
+            printf("write_fields: writing a field failed\n");
+            goto out;
+        }
+        field = field->next;
+    } while (field != field_head);
 
     rc = 0;
  out:
@@ -502,7 +713,7 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
     }
 
     err = read_db_record(dbf, symcbc, records_head);
-    
+
     if (err == RECORDS_ERR) {
         printf("err reading record\n");
         free(records_head);
@@ -513,7 +724,7 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
         /* we're done */
         free(records_head);
         db->records = NULL;
-    } else { 
+    } else {
         records_head->next = records_head->prev = records_head;
         db->records = records_head;
         do {
@@ -550,17 +761,17 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
 
 static
 int
-verify_db(struct db *db, unsigned char *digest_key, unsigned char *file_digest)
+hmac_db(struct db *db, unsigned char *digest_key, unsigned char *digest)
 {
     int rc;
     hmac_state hmac;
     int hashfcn;
     struct field *field;
     struct record *record;
-    unsigned char my_digest[DIGEST_LEN];
     unsigned long dlen;
 
     dlen = DIGEST_LEN;
+    rc = -1;
 
     if ((hashfcn = register_hash(&sha256_desc)) == -1) {
         printf("couldn't register hash\n");
@@ -597,7 +808,7 @@ verify_db(struct db *db, unsigned char *digest_key, unsigned char *file_digest)
         } while (record != db->records);
     }
 
-    if (hmac_done(&hmac, my_digest, &dlen) != CRYPT_OK) {
+    if (hmac_done(&hmac, digest, &dlen) != CRYPT_OK) {
         printf("couldn't finish digest\n");
         goto out;
     }
@@ -607,14 +818,58 @@ verify_db(struct db *db, unsigned char *digest_key, unsigned char *file_digest)
         goto out;
     }
 
-    if (memcmp(my_digest, file_digest, DIGEST_LEN)) {
-        printf("digests are different!\n");
+    rc = 0;
+ out:
+    return rc;
+}
+
+/* symmetry with read_db
+   so this guy should write the EOF marker when he's done writing the db records
+   */
+static
+int
+write_db(const struct db *db, const unsigned char *db_key, const unsigned char *iv, struct rand_state *rs, FILE *dbf)
+{
+    int rc, twofish, err;
+    symmetric_CBC symcbc;
+    struct record *records_head, *record;
+
+    rc = -1;
+
+    if ((twofish = register_cipher(&twofish_desc)) == -1) {
+        printf("can't register twofish alg\n");
+        goto out;
+    }
+
+    if ((err = cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc)) != CRYPT_OK) {
+        printf("write_db: couldn't start cbc\n");
+        goto out;
+    }
+
+    if (write_fields(db->header.fields, &symcbc, rs, dbf)) {
+        printf("write_db: failed to write header fields\n");
+        goto out;
+    }
+
+    record = records_head = db->records;
+    if (record) {
+        do {
+            if (write_fields(record->fields, &symcbc, rs, dbf)) {
+                printf("write_db: failed to write a record\n");
+                goto out;
+            }
+            record = record->next;
+        } while (record != records_head);
+    }
+
+    if (fwrite(RECORDS_EOF_SENTINEL, BLOCK_LEN, 1, dbf) < 1) {
+        printf("write_db: failed to write sentinel\n");
         goto out;
     }
 
     rc = 0;
  out:
-    return !rc;
+    return rc;
 }
 
 static
@@ -661,24 +916,130 @@ read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
     return db;
 }
 
+/* this should be used by a save function - atomic rename */
+int
+write_pwsdb(FILE *dbf, struct db *db, char *pw, unsigned int iter)
+{
+    int rc, err;
+    unsigned char salt[SALT_LEN],
+        pw_key[KEY_LEN],
+        hashed_pw_key[KEY_LEN],
+        db_key[KEY_LEN],
+        digest_key[KEY_LEN],
+        iterbuf[ITER_BYTES],
+        iv[BLOCK_LEN],
+        file_digest[DIGEST_LEN];
+    struct rand_state rs;
+
+    memset(&rs, 0, sizeof(rs));
+
+    if (init_random(&rs)) {
+        perror("init_random");
+        goto out;
+    }
+
+    rc = -1;
+
+    if (fwrite(PWS_TAG, PWS_TAG_LEN, 1, dbf) < 1) {
+        printf("tag write failed\n");
+        goto out;
+    }
+
+    err = get_random_bytes(&rs, salt, SALT_LEN);
+    if (err) {
+        printf("failed to get gen salt\n");
+        goto out;
+    }
+
+    if (fwrite(salt, SALT_LEN, 1, dbf) < 1) {
+        printf("salt write failed\n");
+        goto out;
+    }
+
+    write_le_uint32(iter, iterbuf);
+    if (fwrite(iterbuf, ITER_BYTES, 1, dbf) < 1) {
+        printf("iter write failed\n");
+        goto out;
+    }
+
+    keystretch(pw, salt, iter, pw_key);
+    sha256_once(pw_key, KEY_LEN, hashed_pw_key);
+    if (fwrite(hashed_pw_key, KEY_LEN, 1, dbf) < 1) {
+        printf("hashed pw key write failed\n");
+        goto out;
+    }
+
+    if (get_random_bytes(&rs, db_key, KEY_LEN)) {
+        printf("failed to get bytes for db_key\n");
+        goto out;
+    }
+
+    if (write_key(pw_key, db_key, dbf)) {
+        printf("failed to write db key\n");
+        goto out;
+    }
+
+    if (get_random_bytes(&rs, digest_key, KEY_LEN)) {
+        printf("failed to gen digest_key\n");
+        goto out;
+    }
+
+    if (write_key(pw_key, digest_key, dbf)) {
+        printf("failed to write digest_key\n");
+        goto out;
+    }
+
+    if (get_random_bytes(&rs, iv, BLOCK_LEN)) {
+        printf("failed to generate iv\n");
+        goto out;
+    }
+
+    if (fwrite(iv, BLOCK_LEN, 1, dbf) < 1) {
+        printf("failed to write iv\n");
+        goto out;
+    }
+
+    if (write_db(db, db_key, iv, &rs, dbf)) {
+        printf("failed to write db\n");
+        goto out;
+    }
+
+    if (hmac_db(db, digest_key, file_digest)) {
+        printf("failed to make file digest\n");
+        goto out;
+    }
+
+    if (fwrite(file_digest, DIGEST_LEN, 1, dbf) < 1) {
+        printf("failed to write digest\n");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    done_random(&rs);
+    return rc;
+}
+
 struct db *
-read_pwsdb(FILE *dbf, char *pw) {
+read_pwsdb(FILE *dbf, char *pw)
+{
     int err, rc;
     unsigned int iter;
     char tagbuf[PWS_TAG_LEN];
     unsigned char salt[SALT_LEN],
-        iterbuf[4],
+        iterbuf[ITER_BYTES],
         pw_key[KEY_LEN],
         hashed_pw_key[KEY_LEN],
         db_key[KEY_LEN],
         digest_key[KEY_LEN],
         iv[BLOCK_LEN],
-        file_digest[DIGEST_LEN];
+        their_digest[DIGEST_LEN],
+        my_digest[DIGEST_LEN];
     struct db *db;
 
     rc = -1;
     db = NULL;
-    
+
     if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) {
         printf("failed to read tag\n");
         goto out;
@@ -694,7 +1055,7 @@ read_pwsdb(FILE *dbf, char *pw) {
         goto out;
     }
 
-    if (fread(iterbuf, 1, 4, dbf) < 4) {
+    if (fread(iterbuf, 1, ITER_BYTES, dbf) < 4) {
         printf("failed to read iter\n");
         goto out;
     }
@@ -738,13 +1099,18 @@ read_pwsdb(FILE *dbf, char *pw) {
     if (!db)
         goto out;
 
-    if (fread(file_digest, DIGEST_LEN, 1, dbf) < 1) {
+    if (fread(their_digest, DIGEST_LEN, 1, dbf) < 1) {
         printf("couldn't read digest\n");
         goto out;
     }
 
-    if (!verify_db(db, digest_key, file_digest)) {
+    if (hmac_db(db, digest_key, my_digest)) {
         printf("couldn't verify db\n");
+        goto out;
+    }
+
+    if (memcmp(their_digest, my_digest, DIGEST_LEN)) {
+        printf("digests are different\n");
         goto out;
     }
 
@@ -761,23 +1127,48 @@ read_pwsdb(FILE *dbf, char *pw) {
 int
 main(int argc, char **argv)
 {
-    if (argc == 3) {
-        char *dbpath, *pw;
-        FILE *dbf;
-        struct db *db;
+    char *dbinpath, *dboutpath, *pw;
+    FILE *dbinf, *dboutf;
+    struct db *db;
+    int rc;
 
-        dbpath = argv[1];
-        pw = argv[2];
-        dbf = fopen(dbpath, "r");
-        if (!dbf) {
-            printf("failed to open file\n");
-        } else {
-            db = read_pwsdb(dbf, pw);
-            if (db) {
-                print_db(db);
-                destroy_db(db);
-                free(db);
-            }
-        }
+    dbinf = NULL;
+    dboutf = NULL;
+    db = NULL;
+    rc = -1;
+
+    if (argc != 4) {
+        printf("usage: <me> indb outdb password\n");
+        goto out;
     }
+    dbinpath = argv[1];
+    dboutpath = argv[2];
+    pw = argv[3];
+    dbinf = fopen(dbinpath, "r");
+    if (!dbinf) {
+        printf("failed to open indb file\n");
+        goto out;
+    }
+    db = read_pwsdb(dbinf, pw);
+    if (!db) {
+        printf("failed to read db\n");
+        goto out;
+    }
+
+    print_db(db);
+
+    dboutf = fopen(dboutpath, "w");
+    if (write_pwsdb(dboutf, db, pw, 2048)) {
+        printf("failed to write db\n");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    fclose(dbinf);
+    fclose(dboutf);
+    destroy_db(db);
+    free(db);
+
+    return rc;
 }
