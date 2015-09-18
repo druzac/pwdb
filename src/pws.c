@@ -2,8 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <uuid/uuid.h>
 
 #include <tomcrypt.h>
+
+#include "pws.h"
 
 #define PWS_TAG "PWS3"
 #define PWS_TAG_LEN 4
@@ -13,6 +16,7 @@
 #define BLOCK_LEN 16
 #define DIGEST_LEN 32
 #define ITER_BYTES 4
+#define UUID_LEN 16
 
 #define TYPE_VERSION 0x00
 #define TYPE_UUID    0x01
@@ -43,8 +47,7 @@ struct db_header {
 };
 
 struct record {
-    unsigned char *uuid; /* N. B. this is a pointer into one of the fields
-                            do not free */
+    uuid_t uuid;
     char *title;
     char *password;
     struct field *fields;
@@ -134,29 +137,33 @@ print_db(struct db *db)
 {
     struct field *field, *fields_head;
     struct record *record, *records_head;
+    uuid_string_t uuid_s;
     printf("version: 0x%x\n", db->header.version);
 
     fields_head = db->header.fields;
     field = fields_head;
 
-    do {
-        printf("db header field:\n  length: %u, field type: 0x%x, field data: %.*s\n",
-               field->len, field->type, field->len, field->data);
-        field = field->next;
-    } while (field != fields_head);
+    /* do { */
+    /*     printf("db header field:\n  length: %u, field type: 0x%x, field data: %.*s\n", */
+    /*            field->len, field->type, field->len, field->data); */
+    /*     field = field->next; */
+    /* } while (field != fields_head); */
 
     records_head = db->records;
     record = records_head;
     if (record) {
         do {
-            printf("record:\n  title: %s\n  password: %s\n",
-                   record->title, record->password);
+            uuid_unparse(record->uuid, uuid_s);
+            printf("%s:\n"
+                   "  password: %s\n"
+                   "  uuid: %s\n",
+                   record->title, record->password, uuid_s);
             record = record->next;
         } while (record != records_head);
     }
 }
 
-void
+static void
 free_fields(struct field *fields_head)
 {
     struct field *curr, *next;
@@ -170,7 +177,7 @@ free_fields(struct field *fields_head)
 }
 
 /* doesn't free the whole list */
-void
+static void
 destroy_record(struct record *record)
 {
     if (record) {
@@ -180,7 +187,7 @@ destroy_record(struct record *record)
     }
 }
 
-void
+static void
 free_records(struct record *records_head)
 {
     struct record *curr, *next;
@@ -281,7 +288,7 @@ keystretch(const char *pw,
 }
 
 /* returns bool */
-int
+static int
 check_pass(unsigned char *mkey, unsigned char *hkey)
 {
     hash_state md;
@@ -297,7 +304,7 @@ check_pass(unsigned char *mkey, unsigned char *hkey)
     return (!memcmp(myhkey, hkey, 32));
 }
 
-int
+static int
 write_key(unsigned char *eckey, unsigned char *keybuf, FILE *f)
 {
     symmetric_key skey;
@@ -341,7 +348,7 @@ write_key(unsigned char *eckey, unsigned char *keybuf, FILE *f)
    decrypts ct using twofish in ECB mode
    writes 32 bytes to out if successful
    */
-int
+static int
 decrypt_key(unsigned char *key, unsigned char *ct, unsigned char *out)
 {
     symmetric_key skey;
@@ -664,7 +671,9 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
     do {
         switch (field->type) {
         case TYPE_UUID:
-            rec->uuid = field->data;
+            if (field->len != UUID_LEN)
+                goto out;
+            memcpy(rec->uuid, field->data, UUID_LEN);
             valid_mask |= (1 << 0);
             break;
         case TYPE_TITLE:
@@ -761,7 +770,7 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
 
 static
 int
-hmac_db(struct db *db, unsigned char *digest_key, unsigned char *digest)
+hmac_db(const struct db *db, unsigned char *digest_key, unsigned char *digest)
 {
     int rc;
     hmac_state hmac;
@@ -917,8 +926,8 @@ read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
 }
 
 /* this should be used by a save function - atomic rename */
-int
-write_pwsdb(FILE *dbf, struct db *db, char *pw, unsigned int iter)
+static int
+write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
 {
     int rc, err;
     unsigned char salt[SALT_LEN],
@@ -1021,7 +1030,7 @@ write_pwsdb(FILE *dbf, struct db *db, char *pw, unsigned int iter)
 }
 
 struct db *
-read_pwsdb(FILE *dbf, char *pw)
+read_pwsdb(char *pw, FILE *dbf)
 {
     int err, rc;
     unsigned int iter;
@@ -1124,51 +1133,51 @@ read_pwsdb(FILE *dbf, char *pw)
     return db;
 }
 
-int
-main(int argc, char **argv)
-{
-    char *dbinpath, *dboutpath, *pw;
-    FILE *dbinf, *dboutf;
-    struct db *db;
-    int rc;
+/* int */
+/* main(int argc, char **argv) */
+/* { */
+/*     char *dbinpath, *dboutpath, *pw; */
+/*     FILE *dbinf, *dboutf; */
+/*     struct db *db; */
+/*     int rc; */
 
-    dbinf = NULL;
-    dboutf = NULL;
-    db = NULL;
-    rc = -1;
+/*     dbinf = NULL; */
+/*     dboutf = NULL; */
+/*     db = NULL; */
+/*     rc = -1; */
 
-    if (argc != 4) {
-        printf("usage: <me> indb outdb password\n");
-        goto out;
-    }
-    dbinpath = argv[1];
-    dboutpath = argv[2];
-    pw = argv[3];
-    dbinf = fopen(dbinpath, "r");
-    if (!dbinf) {
-        printf("failed to open indb file\n");
-        goto out;
-    }
-    db = read_pwsdb(dbinf, pw);
-    if (!db) {
-        printf("failed to read db\n");
-        goto out;
-    }
+/*     if (argc != 4) { */
+/*         printf("usage: <me> indb outdb password\n"); */
+/*         goto out; */
+/*     } */
+/*     dbinpath = argv[1]; */
+/*     dboutpath = argv[2]; */
+/*     pw = argv[3]; */
+/*     dbinf = fopen(dbinpath, "r"); */
+/*     if (!dbinf) { */
+/*         printf("failed to open indb file\n"); */
+/*         goto out; */
+/*     } */
+/*     db = read_pwsdb(dbinf, pw); */
+/*     if (!db) { */
+/*         printf("failed to read db\n"); */
+/*         goto out; */
+/*     } */
 
-    print_db(db);
+/*     print_db(db); */
 
-    dboutf = fopen(dboutpath, "w");
-    if (write_pwsdb(dboutf, db, pw, 2048)) {
-        printf("failed to write db\n");
-        goto out;
-    }
+/*     dboutf = fopen(dboutpath, "w"); */
+/*     if (write_pwsdb(dboutf, db, pw, 2048)) { */
+/*         printf("failed to write db\n"); */
+/*         goto out; */
+/*     } */
 
-    rc = 0;
- out:
-    fclose(dbinf);
-    fclose(dboutf);
-    destroy_db(db);
-    free(db);
+/*     rc = 0; */
+/*  out: */
+/*     fclose(dbinf); */
+/*     fclose(dboutf); */
+/*     destroy_db(db); */
+/*     free(db); */
 
-    return rc;
-}
+/*     return rc; */
+/* } */

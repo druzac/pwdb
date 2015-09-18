@@ -8,6 +8,7 @@
 #include "util.h"
 #include "file_encrypt.h"
 #include "db.h"
+#include "pws.h"
 
 
 #define MAX_PASS_LENGTH 64
@@ -225,29 +226,44 @@ open_db(const char *dbpath, const char *mode, FILE **db, struct pwdb **pdb, char
     return rc;
 }
 
-
-/* XXX */
-/* should specialize these arguments */
 int
 cmd_list(struct arguments *args)
 {
     int rc;
-    FILE *db;
-    struct pwdb *pdb;
+    FILE *dbf;
+    struct db *db;
     char pass[MAX_PASS_LENGTH + 1];
     
     rc = -1;
     db = NULL;
+    dbf = NULL;
 
-    if (open_db(args->dbfile, "r", &db, &pdb, pass, sizeof(pass)/sizeof(*pass)))
+    if (!args->dbfile) {
+        fprintf(stderr, "%s\n", NO_DB_FILE);
         goto out;
-    
-    pwdb_print_accnts(pdb);
+    }
+
+    if (get_pass(PASS_PROMPT, pass, MAX_PASS_LENGTH + 1, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
+        goto out;
+    }
+
+    if (!(dbf = fopen(args->dbfile, "r"))) {
+        perror("failed to open db");
+        goto out;
+    }
+
+    if (!(db = read_pwsdb(pass, dbf))) {
+        goto out;
+    }
+
+    print_db(db);
 
     rc = 0;
  out:
-    if (db)
-        fclose(db);
+    fclose(dbf);
+    destroy_db(db);
+    free(db);
     return rc;
 }
 
