@@ -163,14 +163,40 @@ print_db(struct db *db)
 static void
 free_fields(struct field *fields_head)
 {
-    struct field *curr, *next;
-    curr = fields_head;
+    if (fields_head) {
+        struct field *curr, *next;
 
-    while (next != fields_head) {
-        next = curr->next;
-        free(curr->data);
-        curr = next;
+        curr = fields_head;
+        while (next != fields_head) {
+            next = curr->next;
+            free(curr->data);
+            free(curr);
+            curr = next;
+        }
     }
+}
+
+static int
+add_field(struct field *fields_head, struct field *newf, const void *data, unsigned int dlen, unsigned char type)
+{
+    int rc;
+
+    rc = -1;
+    newf->len = dlen;
+    newf->type = type;
+    if (!(newf->data = malloc(dlen))) {
+        fprintf(stderr, "couldn't malloc data for length %d\n", dlen);
+        goto out;
+    }
+
+    rc = 0;
+    memcpy(newf->data, data, dlen);
+    newf->next = fields_head;
+    newf->prev = fields_head->prev;
+    fields_head->prev->next = newf;
+    fields_head->prev = newf;
+ out:
+    return rc;
 }
 
 /* doesn't free the whole list */
@@ -897,9 +923,11 @@ read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
     }
 
     db = malloc(sizeof(*db));
+
     if (!db)
         goto out;
 
+    memset(db, 0, (sizeof(*db)));
     cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc);
 
     if (read_db_header(dbf, &symcbc, &db->header)) {
@@ -1177,7 +1205,7 @@ pwsdb_init(struct db *db)
 }
 
 int
-pwsdb_save(const struct db *db, const char *pw, unsigned int iter, char *dbpath)
+pwsdb_save(const struct db *db, const char *pw, char *dbpath)
 {
     int rc, tmpfd, err;
     char tmpfname[] = "/tmp/pwsdb.tmpXXXXXX";
@@ -1191,7 +1219,7 @@ pwsdb_save(const struct db *db, const char *pw, unsigned int iter, char *dbpath)
     if (!(tmpdbf = fdopen(tmpfd, "w")))
         goto out;
 
-    if (write_pwsdb(db, pw, iter, tmpdbf)) {
+    if (write_pwsdb(db, pw, DEFAULT_ITER, tmpdbf)) {
         fprintf(stderr, "failed to write to db");
         goto out;
     }
@@ -1228,7 +1256,7 @@ pwsdb_create_new(const char *pw, char *dbpath)
     int rc;
 
     pwsdb_init(&db);
-    rc = pwsdb_save(&db, pw, DEFAULT_ITER, dbpath);
+    rc = pwsdb_save(&db, pw, dbpath);
     destroy_db(&db);
 
     return rc;
@@ -1238,10 +1266,65 @@ int
 pwsdb_add_record(struct db *db, const char *title, const char *pass)
 {
     int rc;
-    /* XXX TODO  */
-    rc = -1;
+    struct field *field;
+    struct record *rec;
+    uuid_t uuid;
 
+    rc = -1;
+    rec = (struct record *) (field = NULL);
+
+    if (!(rec = malloc(sizeof(*rec))))
+        goto out;
+
+    memset(rec, 0, sizeof(*rec));
+    uuid_generate_random(uuid);
+    uuid_copy(rec->uuid, uuid);
+
+    if (!(field = malloc(sizeof(*field))))
+        goto out;
+
+    memset(field, 0, sizeof(*field));
+    field->next = field->prev = field;
+    rec->fields = field;
+    if (add_field(field, field, uuid, UUID_LEN, TYPE_UUID))
+        goto out;
+
+    if (!(field = malloc(sizeof(*field))) ||
+        add_field(rec->fields, field, title, strlen(title), TYPE_TITLE)) {
+        free(field);
+        goto out;
+    }
+
+    if (!(field = malloc(sizeof(*field))) ||
+        add_field(rec->fields, field, pass, strlen(pass), TYPE_PASSWORD)) {
+        free(field);
+        goto out;
+    }
+
+    if (!(field = malloc(sizeof(*field))) ||
+        add_field(rec->fields, field, NULL, 0, TYPE_EOE)) {
+        free(field);
+    }
+
+    if (!(rec->title = strdup(title)) ||
+        !(rec->password = strdup(pass)))
+        goto out;
+
+    rc = 0;
+    if (db->records) {
+        rec->next = db->records;
+        rec->prev = db->records->prev;
+        db->records->prev->next = rec;
+        db->records->prev = rec;
+    } else {
+        rec->next = rec->prev = rec;
+        db->records = rec;
+    }
  out:
+    if (rc) {
+        destroy_record(rec);
+        free(rec);
+    }
     return rc;
 }
 

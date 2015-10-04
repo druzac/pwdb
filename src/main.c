@@ -34,7 +34,7 @@ static char *PASS_PROMPT = "enter db password:";
 /* -b database, takes an arg */
 /* for get, put */
 /* -u user */
-/* -d domain */
+/* -t title */
 
 /* gen */
 /* -c length of generated password */
@@ -52,14 +52,14 @@ static struct argp_option options[] = {
     {"symbol", 's', 0, 0, "allow symbols in password", 0},
     {"count", 'c', "COUNT", 0, "length for generated password", 0},
     {"user", 'u', "USER", 0, "username for entry", 0},
-    {"domain", 'd', "DOMAIN", 0, "domain for entry", 0},
+    {"title", 't', "TITLE", 0, "title for entry", 0},
     {"database", 'b', "DBFILE", 0, "password database file", 0},
     {0}
 };
 
 struct arguments
 {
-    char *user, *domain, *dbfile;
+    char *user, *title, *dbfile;
     bool symbol;
     int count;
     cmd_t cmd;
@@ -116,8 +116,8 @@ parse_opt (int key, char *arg, struct argp_state *state)
   case 'u':
       argstt->user = arg;
       break;
-  case 'd':
-      argstt->domain = arg;
+  case 't':
+      argstt->title = arg;
       break;
   case 'b':
       argstt->dbfile = arg;
@@ -250,72 +250,59 @@ cmd_list(struct arguments *args)
     return rc;
 }
 
+/* TODO
+   add an option to automatically generate a new password here
+   */
 int
 cmd_insert(struct arguments *args)
 {
     int rc;
-    FILE *db, *tmpf;
-    struct pwdb *pdb;
+    FILE *dbf;
+    struct db *db;
     char master_pass[MAX_PASS_LENGTH + 1];
     char new_pass[MAX_PASS_LENGTH + 1];
-    char tmpfile[] = "/tmp/dbXXXXXXX";
-    unsigned int plen;
-    unsigned char *buf;
-    int blen, tmpfd;
-
 
     rc = -1;
     db = NULL;
+    dbf = NULL;
 
-    if (!args->user || !args->domain) {
+    if (!args->title || !args->dbfile) {
         fprintf(stderr, "missing arguments for insert\n");
         goto out;
     }
 
-    if (open_db(args->dbfile, "r+", &db, &pdb, master_pass, sizeof(master_pass)/sizeof(*master_pass)))
+    if (get_pass(PASS_PROMPT, master_pass, MAX_PASS_LENGTH + 1, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
         goto out;
+    }
 
-    fclose(db);
+    if (!(dbf = fopen(args->dbfile, "r")) ||
+        !(db = read_pwsdb(master_pass, dbf))) {
+        perror("failed to open db");
+        goto out;
+    }
+
     if (get_pass("enter password for account:",
                  new_pass,
                  sizeof(new_pass)/sizeof(*new_pass),
                  stdin))
         goto out;
 
-    if (pwdb_insert(pdb, args->user, args->domain, new_pass)) {
+    if (pwsdb_add_record(db, args->title, new_pass)) {
         fprintf(stderr, "failed to insert into db\n");
         goto out;
     }
 
-    if (!(buf = pwdb_serialize(pdb, &blen))) {
-        fprintf(stderr, "couldn't serialize\n");
+    if (pwsdb_save(db, master_pass, args->dbfile)) {
+        fprintf(stderr, "couldn't save db");
         goto out;
     }
 
-    tmpfd = mkstemp(tmpfile);
-    if (tmpfd == -1) {
-        fprintf(stderr, "couldn't open tmp file\n");
-        goto out;
-    }
-
-    tmpf = fdopen(tmpfd, "w");
-    if (!tmpf) {
-        fprintf(stderr, "couldn't streamify tmpfile\n");
-        goto out;
-    }
-
-    if (encrypt_file(master_pass, strlen(master_pass), buf, blen, tmpf)) {
-        fprintf(stderr, "couldn't encrypt to tmp file\n");
-        goto out;
-    }
-
-    fclose(tmpf);
-    rename(tmpfile, args->dbfile);
-    /* if (encrypt_file( */
     rc = 0;
  out:
-    if (db)
-        fclose(db);
+    fclose(dbf);
+    destroy_db(db);
+    free(db);
 
     return rc;
 }
