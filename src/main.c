@@ -35,9 +35,9 @@ static char *PASS_PROMPT = "enter db password:";
 /* for get, put */
 /* -u user */
 /* -d domain */
-/* -c length of generated password */
 
 /* gen */
+/* -c length of generated password */
 /* -s use symbols */
 
 typedef enum {CMD_LIST, CMD_INSERT, CMD_RETRIEVE, CMD_GENERATE, CMD_INIT} cmd_t;
@@ -136,28 +136,14 @@ static struct argp argp = {options, parse_opt, 0, doc};
 int
 cmd_init(struct arguments *args)
 {
-    /* check args */
-    int rc, fd;
-    FILE *db;
+    int rc;
     char pass[MAX_PASS_LENGTH + 1];
 
     rc = -1;
-    db = NULL;
+
     /* for this, we just need a dbfile arg */
     if (!args->dbfile) {
         fprintf(stderr, "%s\n", NO_DB_FILE);
-        goto out;
-    }
-
-    fd = open(args->dbfile, O_CREAT | O_EXCL | O_WRONLY);
-    if (fd == -1) {
-        perror("can't create file");
-        goto out;
-    }
-
-    db = fdopen(fd, "w");
-    if (!db) {
-        fprintf(stderr, "can't create stream\n");
         goto out;
     }
 
@@ -166,11 +152,8 @@ cmd_init(struct arguments *args)
         goto out;
     }
 
-    encrypt_file(pass, strlen(pass), (unsigned char*) "", 0, db);
-    rc = 0;
+    rc = pwsdb_create_new(pass, args->dbfile);
  out:
-    if (db)
-        fclose(db);
     return rc;
 }
 

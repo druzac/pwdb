@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <uuid/uuid.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include <tomcrypt.h>
 
@@ -21,6 +22,8 @@
 #define TYPE_VERSION 0x00
 #define TYPE_UUID    0x01
 #define TYPE_EOE     0xff
+
+#define DEFAULT_ITER (1 << 12)
 
 /* mandatory record fields:
    UUID
@@ -143,12 +146,6 @@ print_db(struct db *db)
     fields_head = db->header.fields;
     field = fields_head;
 
-    /* do { */
-    /*     printf("db header field:\n  length: %u, field type: 0x%x, field data: %.*s\n", */
-    /*            field->len, field->type, field->len, field->data); */
-    /*     field = field->next; */
-    /* } while (field != fields_head); */
-
     records_head = db->records;
     record = records_head;
     if (record) {
@@ -193,12 +190,13 @@ free_records(struct record *records_head)
     struct record *curr, *next;
     curr = records_head;
 
-    while (next != records_head) {
-        next = curr->next;
-        destroy_record(curr);
-        free(curr);
-        curr = next;
-    }
+    if (curr)
+        while (next != records_head) {
+            next = curr->next;
+            destroy_record(curr);
+            free(curr);
+            curr = next;
+        }
 }
 
 void
@@ -795,10 +793,11 @@ hmac_db(const struct db *db, unsigned char *digest_key, unsigned char *digest)
     field = db->header.fields;
     /* must have the version at least */
     do {
-        if (hmac_process(&hmac, field->data, field->len) != CRYPT_OK) {
-            printf("couldn't hash field\n");
-            goto out;
-        }
+        if (field->len)
+            if (hmac_process(&hmac, field->data, field->len) != CRYPT_OK) {
+                printf("couldn't hash field\n");
+                goto out;
+            }
         field = field->next;
     } while (field != db->header.fields);
 
@@ -941,13 +940,12 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
     struct rand_state rs;
 
     memset(&rs, 0, sizeof(rs));
+    rc = -1;
 
     if (init_random(&rs)) {
         perror("init_random");
         goto out;
     }
-
-    rc = -1;
 
     if (fwrite(PWS_TAG, PWS_TAG_LEN, 1, dbf) < 1) {
         printf("tag write failed\n");
@@ -1133,51 +1131,130 @@ read_pwsdb(char *pw, FILE *dbf)
     return db;
 }
 
-/* int */
-/* main(int argc, char **argv) */
-/* { */
-/*     char *dbinpath, *dboutpath, *pw; */
-/*     FILE *dbinf, *dboutf; */
-/*     struct db *db; */
-/*     int rc; */
+int
+pwsdb_init(struct db *db)
+{
+    int rc;
+    struct field *vers, *eoe;
+    unsigned char *vers_d;
 
-/*     dbinf = NULL; */
-/*     dboutf = NULL; */
-/*     db = NULL; */
-/*     rc = -1; */
+    rc = -1;
 
-/*     if (argc != 4) { */
-/*         printf("usage: <me> indb outdb password\n"); */
-/*         goto out; */
-/*     } */
-/*     dbinpath = argv[1]; */
-/*     dboutpath = argv[2]; */
-/*     pw = argv[3]; */
-/*     dbinf = fopen(dbinpath, "r"); */
-/*     if (!dbinf) { */
-/*         printf("failed to open indb file\n"); */
-/*         goto out; */
-/*     } */
-/*     db = read_pwsdb(dbinf, pw); */
-/*     if (!db) { */
-/*         printf("failed to read db\n"); */
-/*         goto out; */
-/*     } */
+    memset(db, 0, sizeof(*db));
+    db->header.version = VERSION;
+    vers = eoe = NULL;
+    vers_d = NULL;
 
-/*     print_db(db); */
+    if (!(vers = malloc(sizeof(*vers))))
+        goto out;
 
-/*     dboutf = fopen(dboutpath, "w"); */
-/*     if (write_pwsdb(dboutf, db, pw, 2048)) { */
-/*         printf("failed to write db\n"); */
-/*         goto out; */
-/*     } */
+    if (!(vers_d = malloc(2 * sizeof(*vers_d))))
+        goto out;
 
-/*     rc = 0; */
-/*  out: */
-/*     fclose(dbinf); */
-/*     fclose(dboutf); */
-/*     destroy_db(db); */
-/*     free(db); */
+    if (!(eoe = malloc(sizeof(*eoe))))
+        goto out;
 
-/*     return rc; */
-/* } */
+    vers->len = 2;
+    vers->type = TYPE_VERSION;
+    write_le_uint16(VERSION, vers_d);
+    vers->data = vers_d;
+    vers->next = vers->next = eoe;
+
+    eoe->len = 0;
+    eoe->type = TYPE_EOE;
+    eoe->data = NULL;
+    eoe->next = eoe->prev = vers;
+
+    db->header.fields = vers;
+    rc = 0;
+ out:
+    if (rc) {
+        free(vers);
+        free(vers_d);
+        free(eoe);
+    }
+    return rc;
+}
+
+int
+pwsdb_save(const struct db *db, const char *pw, unsigned int iter, char *dbpath)
+{
+    int rc, tmpfd, err;
+    char tmpfname[] = "/tmp/pwsdb.tmpXXXXXX";
+    FILE *tmpdbf;
+
+    rc = tmpfd = -1;
+
+    if (-1 == (tmpfd = mkstemp(tmpfname)))
+        goto out;
+
+    if (!(tmpdbf = fdopen(tmpfd, "w")))
+        goto out;
+
+    if (write_pwsdb(db, pw, iter, tmpdbf)) {
+        fprintf(stderr, "failed to write to db");
+        goto out;
+    }
+
+    /* N.B. this call returns a non-zero value, but it doesn't
+       set errno
+       bug?
+       */
+    if (fclose(tmpdbf) && errno != 0) {
+        perror("couldn't flush");
+        goto out;
+    }
+
+    if (rename(tmpfname, dbpath)) {
+        fprintf(stderr, "rename failed");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    if (rc)
+        err = errno;
+    if (tmpfd != -1)
+        close(tmpfd);
+    if (rc)
+        errno = err;
+    return rc;
+}
+
+int
+pwsdb_create_new(const char *pw, char *dbpath)
+{
+    struct db db;
+    int rc;
+
+    pwsdb_init(&db);
+    rc = pwsdb_save(&db, pw, DEFAULT_ITER, dbpath);
+    destroy_db(&db);
+
+    return rc;
+}
+
+int
+pwsdb_add_record(struct db *db, const char *title, const char *pass)
+{
+    int rc;
+    /* XXX TODO  */
+    rc = -1;
+
+ out:
+    return rc;
+}
+
+int
+pwsdb_remove_record(struct db *db, const char *title)
+{
+    /* TODO */
+    return -1;
+}
+
+int
+pwsdb_remove_record_u(struct db *db, const uuid_t uuid)
+{
+    /* TODO */
+    return -1;
+}
