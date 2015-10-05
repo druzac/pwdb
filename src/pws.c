@@ -906,28 +906,19 @@ write_db(const struct db *db, const unsigned char *db_key, const unsigned char *
     return rc;
 }
 
-static
-struct db *
-read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
+static int
+read_db(struct db *db, unsigned char *db_key, unsigned char *iv, FILE *dbf)
 {
     symmetric_CBC symcbc;
     int twofish, rc;
-    struct db *db;
 
     rc = -1;
-    db = NULL;
 
     if ((twofish = register_cipher(&twofish_desc)) == -1) {
         printf("can't register twofish alg\n");
         goto out;
     }
 
-    db = malloc(sizeof(*db));
-
-    if (!db)
-        goto out;
-
-    memset(db, 0, (sizeof(*db)));
     cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc);
 
     if (read_db_header(dbf, &symcbc, &db->header)) {
@@ -944,12 +935,7 @@ read_db(FILE *dbf, unsigned char *db_key, unsigned char *iv)
  dereg_cipher:
     cbc_done(&symcbc);
  out:
-    if (rc) {
-        destroy_db(db);
-        free(db);
-        db = NULL;
-    }
-    return db;
+    return rc;
 }
 
 /* this should be used by a save function - atomic rename */
@@ -1055,8 +1041,8 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
     return rc;
 }
 
-struct db *
-read_pwsdb(char *pw, FILE *dbf)
+int
+read_pwsdb(struct db *db, const char *pw, FILE *dbf)
 {
     int err, rc;
     unsigned int iter;
@@ -1070,10 +1056,9 @@ read_pwsdb(char *pw, FILE *dbf)
         iv[BLOCK_LEN],
         their_digest[DIGEST_LEN],
         my_digest[DIGEST_LEN];
-    struct db *db;
 
     rc = -1;
-    db = NULL;
+    memset(db, 0, sizeof(*db));
 
     if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) {
         printf("failed to read tag\n");
@@ -1130,8 +1115,7 @@ read_pwsdb(char *pw, FILE *dbf)
         goto out;
     }
 
-    db = read_db(dbf, db_key, iv);
-    if (!db)
+    if (read_db(db, db_key, iv, dbf))
         goto out;
 
     if (fread(their_digest, DIGEST_LEN, 1, dbf) < 1) {
@@ -1156,7 +1140,7 @@ read_pwsdb(char *pw, FILE *dbf)
         free(db);
         db = NULL;
     }
-    return db;
+    return rc;
 }
 
 int
@@ -1249,6 +1233,31 @@ pwsdb_save(const struct db *db, const char *pw, char *dbpath)
     return rc;
 }
 
+struct db *
+pwsdb_open(const char *pw, const char *dbpath)
+{
+    int rc;
+    FILE *dbf;
+    struct db *db;
+
+    rc = -1;
+    db = NULL;
+    dbf = NULL;
+
+    if (!(dbf = fopen(dbpath, "r"))) {
+        perror("failed to open db");
+        goto out;
+    }
+
+    if (!(db = malloc(sizeof(*db))))
+        goto out;
+
+    rc = read_pwsdb(db, pw, dbf);
+ out:
+    fclose(dbf);
+    return db;
+}
+
 int
 pwsdb_create_new(const char *pw, char *dbpath)
 {
@@ -1326,6 +1335,25 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass)
         free(rec);
     }
     return rc;
+}
+
+char *
+pwsdb_get_pass(struct db *db, const uuid_t *uuid)
+{
+    struct record *recs_head, *rec;
+    char *pass;
+
+    pass = NULL;
+    recs_head = rec = db->records;
+    if (rec)
+        do {
+            if (!uuid_compare(rec->uuid, *uuid)) {
+                pass = rec->password;
+                break;
+            }
+            rec = rec->next;
+        } while (rec != recs_head);
+    return pass;
 }
 
 int

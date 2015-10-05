@@ -52,6 +52,7 @@ static struct argp_option options[] = {
     {"symbol", 's', 0, 0, "allow symbols in password", 0},
     {"count", 'c', "COUNT", 0, "length for generated password", 0},
     {"user", 'u', "USER", 0, "username for entry", 0},
+    {"uuid", 'd', "UUID", 0, "uuid for entry", 0},
     {"title", 't', "TITLE", 0, "title for entry", 0},
     {"database", 'b', "DBFILE", 0, "password database file", 0},
     {0}
@@ -61,6 +62,7 @@ struct arguments
 {
     char *user, *title, *dbfile;
     bool symbol;
+    uuid_t uuid;
     int count;
     cmd_t cmd;
     /* char *args[2];                /\* arg1 & arg2 *\/ */
@@ -116,6 +118,9 @@ parse_opt (int key, char *arg, struct argp_state *state)
   case 'u':
       argstt->user = arg;
       break;
+  case 'd':
+      if (uuid_parse(arg, argstt->uuid))
+          argp_usage(state);
   case 't':
       argstt->title = arg;
       break;
@@ -158,68 +163,13 @@ cmd_init(struct arguments *args)
 }
 
 int
-open_db(const char *dbpath, const char *mode, FILE **db, struct pwdb **pdb, char *pbuf, int pbuflen)
-{
-    FILE *ldb;
-    char *buf;
-    struct pwdb *lpwdb;
-    int rc;
-    unsigned int blen;
-
-    rc = -1;
-    ldb = NULL;
-    buf = NULL;
-
-    if (!dbpath) {
-        fprintf(stderr, "%s\n", NO_DB_FILE);
-        goto out;
-    }
-
-    ldb = fopen(dbpath, mode);
-    if (!db) {
-        perror("couldn't open db");
-        goto out;
-    }
-
-    if (get_pass(PASS_PROMPT, pbuf, pbuflen, stdin)) {
-        fprintf(stderr, "%s\n", GET_PASS_FAIL);
-        goto out;
-    }
-
-    buf = decrypt_file(pbuf, strlen(pbuf), ldb, &blen);
-    if (!buf) {
-        fprintf(stderr, "couldn't open db\n");
-        goto out;
-    }
-
-    lpwdb = pwdb_deserialize((unsigned char *) buf, blen);
-    if (!lpwdb) {
-        fprintf(stderr, "couldn't deserialize db\n");
-        goto out;
-    }
-
-    *db = ldb;
-    *pdb = lpwdb;
-    rc = 0;
-
- out:
-    if (rc)
-        fclose(ldb);
-    free(buf);
-    return rc;
-}
-
-int
 cmd_list(struct arguments *args)
 {
     int rc;
-    FILE *dbf;
     struct db *db;
     char pass[MAX_PASS_LENGTH + 1];
     
     rc = -1;
-    db = NULL;
-    dbf = NULL;
 
     if (!args->dbfile) {
         fprintf(stderr, "%s\n", NO_DB_FILE);
@@ -231,22 +181,24 @@ cmd_list(struct arguments *args)
         goto out;
     }
 
-    if (!(dbf = fopen(args->dbfile, "r"))) {
-        perror("failed to open db");
+    if (!(db = pwsdb_open(pass, args->dbfile))) {
+        fprintf(stderr, "bad list\n");
         goto out;
     }
+    /* if (!(dbf = fopen(args->dbfile, "r"))) { */
+    /*     perror("failed to open db"); */
+    /*     goto out; */
+    /* } */
 
-    if (!(db = read_pwsdb(pass, dbf))) {
-        goto out;
-    }
+    /* if (!(db = read_pwsdb(pass, dbf))) { */
+    /*     goto out; */
+    /* } */
 
     print_db(db);
 
     rc = 0;
  out:
-    fclose(dbf);
     destroy_db(db);
-    free(db);
     return rc;
 }
 
@@ -257,14 +209,12 @@ int
 cmd_insert(struct arguments *args)
 {
     int rc;
-    FILE *dbf;
     struct db *db;
     char master_pass[MAX_PASS_LENGTH + 1];
     char new_pass[MAX_PASS_LENGTH + 1];
 
     rc = -1;
     db = NULL;
-    dbf = NULL;
 
     if (!args->title || !args->dbfile) {
         fprintf(stderr, "missing arguments for insert\n");
@@ -276,8 +226,7 @@ cmd_insert(struct arguments *args)
         goto out;
     }
 
-    if (!(dbf = fopen(args->dbfile, "r")) ||
-        !(db = read_pwsdb(master_pass, dbf))) {
+    if (!(db = pwsdb_open(master_pass, args->dbfile))) {
         perror("failed to open db");
         goto out;
     }
@@ -300,10 +249,8 @@ cmd_insert(struct arguments *args)
 
     rc = 0;
  out:
-    fclose(dbf);
     destroy_db(db);
     free(db);
-
     return rc;
 }
 
@@ -311,9 +258,38 @@ int
 cmd_retrieve(struct arguments *args)
 {
     int rc;
+    struct db *db;
+    char pass[MAX_PASS_LENGTH + 1], *fndpass;
 
     rc = -1;
+    db = NULL;
 
+    if (uuid_is_null(args->uuid) || !args->dbfile) {
+        fprintf(stderr, "missing arguments for retrieve\n");
+        goto out;
+    }
+
+    if (get_pass(PASS_PROMPT, pass, MAX_PASS_LENGTH + 1, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
+        goto out;
+    }
+
+    if (!(db = pwsdb_open(pass, args->dbfile))) {
+        fprintf(stderr, "couldn't open db\n");
+        goto out;
+    }
+
+    if (!(fndpass = pwsdb_get_pass(db, &args->uuid))) {
+        fprintf(stderr, "couldn't find pass\n");
+        goto out;
+    }
+
+    printf("found pass: %s\n", fndpass);
+
+    rc = 0;
+ out:
+    destroy_db(db);
+    free(db);
     return rc;
 }
 
@@ -336,11 +312,14 @@ main(int argc, char **argv)
     case CMD_INSERT:
         rc = cmd_insert(&args);
         break;
+    case CMD_RETRIEVE:
+        rc = cmd_retrieve(&args);
+        break;
     default:
         fprintf(stderr, "invalid command\n");
         goto out;
     }
 
  out:
-    exit(rc);
+    return rc;
 }
