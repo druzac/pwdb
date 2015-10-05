@@ -30,6 +30,8 @@ static char *PASS_PROMPT = "enter db password:";
 /* -r retrieve */
 /* -g gen */
 /* -l list */
+/* -k kill  */
+
 
 /* -b database, takes an arg */
 /* for get, put */
@@ -40,7 +42,7 @@ static char *PASS_PROMPT = "enter db password:";
 /* -c length of generated password */
 /* -s use symbols */
 
-typedef enum {CMD_LIST, CMD_INSERT, CMD_RETRIEVE, CMD_GENERATE, CMD_INIT} cmd_t;
+typedef enum {CMD_LIST, CMD_INSERT, CMD_RETRIEVE, CMD_GENERATE, CMD_INIT, CMD_KILL} cmd_t;
 
 static struct argp_option options[] = {
     {"list", 'l', 0, 0, "list entries in db", 0},
@@ -48,6 +50,7 @@ static struct argp_option options[] = {
     {"retrieve", 'r', 0, 0, "get a password from db", 0},
     {"generate", 'g', 0, 0, "generate a password", 0},
     {"initialize", 'z', 0, 0, "initialize a new db file", 0},
+    {"kill", 'k', 0, 0, "remove an entry from the db", 0},
 
     {"symbol", 's', 0, 0, "allow symbols in password", 0},
     {"count", 'c', "COUNT", 0, "length for generated password", 0},
@@ -89,6 +92,11 @@ parse_opt (int key, char *arg, struct argp_state *state)
       if (argstt->cmd)
           argp_usage(state);
       argstt->cmd = CMD_INSERT;
+      break;
+  case 'k':
+      if (argstt->cmd)
+          argp_usage(state);
+      argstt->cmd = CMD_KILL;
       break;
   case 'r':
       if (argstt->cmd)
@@ -279,7 +287,7 @@ cmd_retrieve(struct arguments *args)
         goto out;
     }
 
-    if (!(fndpass = pwsdb_get_pass(db, &args->uuid))) {
+    if (!(fndpass = pwsdb_get_pass(db, args->uuid))) {
         fprintf(stderr, "couldn't find pass\n");
         goto out;
     }
@@ -291,6 +299,49 @@ cmd_retrieve(struct arguments *args)
     destroy_db(db);
     free(db);
     return rc;
+}
+
+int
+cmd_kill(struct arguments *args)
+{
+    int rc;
+    struct db *db;
+    char pass[MAX_PASS_LENGTH + 1], *fndpass;
+
+    rc = -1;
+    db = NULL;
+
+    if (uuid_is_null(args->uuid) || !args->dbfile) {
+        fprintf(stderr, "missing arguments for kill\n");
+        goto out;
+    }
+
+    if (get_pass(PASS_PROMPT, pass, MAX_PASS_LENGTH + 1, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
+        goto out;
+    }
+
+    if (!(db = pwsdb_open(pass, args->dbfile))) {
+        fprintf(stderr, "couldn't open db\n");
+        goto out;
+    }
+
+    if (pwsdb_remove_record(db, args->uuid)) {
+        fprintf(stderr, "failed to insert into db\n");
+        goto out;
+    }
+
+    if (pwsdb_save(db, pass, args->dbfile)) {
+        fprintf(stderr, "couldn't save db");
+        goto out;
+    }
+
+    rc = 0;
+ out:
+    destroy_db(db);
+    free(db);
+    return rc;
+
 }
 
 int
@@ -314,6 +365,9 @@ main(int argc, char **argv)
         break;
     case CMD_RETRIEVE:
         rc = cmd_retrieve(&args);
+        break;
+    case CMD_KILL:
+        rc = cmd_kill(&args);
         break;
     default:
         fprintf(stderr, "invalid command\n");

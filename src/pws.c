@@ -231,6 +231,7 @@ destroy_db(struct db *db)
     if (db) {
         free_fields(db->header.fields);
         free_records(db->records);
+        memset(db, 0, sizeof(*db));
     }
 }
 
@@ -1338,7 +1339,7 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass)
 }
 
 char *
-pwsdb_get_pass(struct db *db, const uuid_t *uuid)
+pwsdb_get_pass(struct db *db, const uuid_t uuid)
 {
     struct record *recs_head, *rec;
     char *pass;
@@ -1347,7 +1348,7 @@ pwsdb_get_pass(struct db *db, const uuid_t *uuid)
     recs_head = rec = db->records;
     if (rec)
         do {
-            if (!uuid_compare(rec->uuid, *uuid)) {
+            if (!uuid_compare(rec->uuid, uuid)) {
                 pass = rec->password;
                 break;
             }
@@ -1357,15 +1358,29 @@ pwsdb_get_pass(struct db *db, const uuid_t *uuid)
 }
 
 int
-pwsdb_remove_record(struct db *db, const char *title)
+pwsdb_remove_record(struct db *db, const uuid_t uuid)
 {
-    /* TODO */
-    return -1;
-}
+    struct record *recs_head, *rec;
+    int rc;
 
-int
-pwsdb_remove_record_u(struct db *db, const uuid_t uuid)
-{
-    /* TODO */
-    return -1;
+    rc = -1;
+    recs_head = rec = db->records;
+    if (rec)
+        do {
+            if (!uuid_compare(rec->uuid, uuid)) {
+                rec->next->prev = rec->prev;
+                rec->prev->next = rec->next;
+                if (rec == recs_head) {
+                    if (rec->next == rec)
+                        db->records = NULL;
+                    else
+                        db->records = rec->next;
+                }
+                destroy_record(rec);
+                free(rec);
+                rc = 0;
+                break;
+            }
+        } while ((rec = rec->next) != recs_head);
+    return rc;
 }
