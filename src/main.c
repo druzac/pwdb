@@ -6,7 +6,6 @@
 #include <fcntl.h>
 
 #include "util.h"
-#include "db.h"
 #include "pws.h"
 #include "clipb.h"
 
