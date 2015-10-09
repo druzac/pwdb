@@ -8,6 +8,7 @@
 #include <tomcrypt.h>
 
 #include "pws.h"
+#include "util.h"
 
 #define PWS_TAG "PWS3"
 #define PWS_TAG_LEN 4
@@ -71,10 +72,6 @@ struct db {
     struct record *records;
 };
 
-struct rand_state {
-    FILE *rdev;
-};
-
 void
 print_bytes(unsigned char *buf, int buflen)
 {
@@ -85,54 +82,6 @@ print_bytes(unsigned char *buf, int buflen)
     printf("\n");
 }
 
-int
-init_random(struct rand_state *rs)
-{
-    FILE *f;
-    int rc;
-
-    rc = -1;
-    if (!(f = fopen("/dev/urandom", "r"))) {
-        perror("init_random");
-        goto out;
-    }
-
-    rc = 0;
-    rs->rdev = f;
- out:
-    return rc;
-}
-
-int
-get_random_bytes(struct rand_state *rs, unsigned char *buf, int buflen)
-{
-    int rc;
-
-    rc = -1;
-    if ((fread(buf, 1, buflen, rs->rdev)) < buflen) {
-        perror("get_random_bytes");
-        goto out;
-    }
-    rc = 0;
- out:
-    return rc;
-}
-
-int
-done_random(struct rand_state *rs)
-{
-    int rc;
-
-    rc = -1;
-    if (rs && rs->rdev && fclose(rs->rdev)) {
-        perror("couldn't deinitialize random");
-        goto out;
-    }
-
-    rc = 0;
- out:
-    return rc;
-}
 
 /* the behaviour here is undefined if the db is invalid */
 void
@@ -503,7 +452,7 @@ write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE 
     curr_cnt = MIN(field->len, BLOCK_LEN - 5);
     memcpy(buf + 5, field->data, curr_cnt);
     if (curr_cnt + 5 < BLOCK_LEN) {
-        get_random_bytes(rs, buf + 5 + curr_cnt, BLOCK_LEN - (curr_cnt + 5));
+        rand_get_bytes(rs, buf + 5 + curr_cnt, BLOCK_LEN - (curr_cnt + 5));
     }
     if (cbc_encrypt(buf, buf, BLOCK_LEN, ec) != CRYPT_OK) {
         printf("write_field: first encrypt failed\n");
@@ -519,7 +468,7 @@ write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE 
         curr_cnt = MIN(field->len - total_cnt, BLOCK_LEN);
         memcpy(buf, field->data + total_cnt, curr_cnt);
         if (curr_cnt < BLOCK_LEN) {
-            get_random_bytes(rs, buf + curr_cnt, BLOCK_LEN - curr_cnt);
+            rand_get_bytes(rs, buf + curr_cnt, BLOCK_LEN - curr_cnt);
         }
         if (cbc_encrypt(buf, buf, BLOCK_LEN, ec) != CRYPT_OK) {
             printf("write_field: encrypt failed\n");
@@ -957,7 +906,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
     memset(&rs, 0, sizeof(rs));
     rc = -1;
 
-    if (init_random(&rs)) {
+    if (rand_init(&rs)) {
         perror("init_random");
         goto out;
     }
@@ -967,7 +916,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         goto out;
     }
 
-    err = get_random_bytes(&rs, salt, SALT_LEN);
+    err = rand_get_bytes(&rs, salt, SALT_LEN);
     if (err) {
         printf("failed to get gen salt\n");
         goto out;
@@ -991,7 +940,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         goto out;
     }
 
-    if (get_random_bytes(&rs, db_key, KEY_LEN)) {
+    if (rand_get_bytes(&rs, db_key, KEY_LEN)) {
         printf("failed to get bytes for db_key\n");
         goto out;
     }
@@ -1001,7 +950,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         goto out;
     }
 
-    if (get_random_bytes(&rs, digest_key, KEY_LEN)) {
+    if (rand_get_bytes(&rs, digest_key, KEY_LEN)) {
         printf("failed to gen digest_key\n");
         goto out;
     }
@@ -1011,7 +960,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         goto out;
     }
 
-    if (get_random_bytes(&rs, iv, BLOCK_LEN)) {
+    if (rand_get_bytes(&rs, iv, BLOCK_LEN)) {
         printf("failed to generate iv\n");
         goto out;
     }
@@ -1038,7 +987,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
 
     rc = 0;
  out:
-    done_random(&rs);
+    rand_destroy(&rs);
     return rc;
 }
 
@@ -1256,7 +1205,7 @@ pwsdb_open(const char *pw, const char *dbpath)
     rc = read_pwsdb(db, pw, dbf);
  out:
     fclose(dbf);
-    return db;
+    return rc ? NULL : db;
 }
 
 int

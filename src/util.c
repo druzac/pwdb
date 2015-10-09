@@ -1,4 +1,3 @@
-#include <sodium.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -21,13 +20,22 @@
    a-z 97-122
    0-9 48-57
    */
-void
+int
 gen_pass(char *out, size_t len, bool syms)
 {
-    int i;
+    int i, rc;
+    struct rand_state rs;
+
+    rc = -1;
+    memset(&rs, 0, sizeof(rs));
+
+    if (rand_init(&rs))
+        goto out;
 
     /* ignore syms for now */
-    randombytes_buf(out, len);
+    if (rand_get_bytes(&rs, (unsigned char *) out, len))
+        goto out;
+
     for (i = 0; i < len; i++) {
         unsigned char c;
 
@@ -40,6 +48,11 @@ gen_pass(char *out, size_t len, bool syms)
             out[i] = (c % 10) + DIGIT_START;
     }
     out[len] = '\0';
+
+    rc = 0;
+ out:
+    rand_destroy(&rs);
+    return rc;
 }
 
 int
@@ -79,5 +92,54 @@ get_pass(char *prompt, char *pwbuf, int buf_len, FILE *stream)
     /* Restore terminal. */
     if (term_set)
         (void) tcsetattr(fileno (stream), TCSAFLUSH, &old);
+    return rc;
+}
+
+int
+rand_init(struct rand_state *rs)
+{
+    FILE *f;
+    int rc;
+
+    rc = -1;
+    if (!(f = fopen("/dev/urandom", "r"))) {
+        perror("init_random");
+        goto out;
+    }
+
+    rc = 0;
+    rs->rdev = f;
+ out:
+    return rc;
+}
+
+int
+rand_get_bytes(struct rand_state *rs, unsigned char *buf, int buflen)
+{
+    int rc;
+
+    rc = -1;
+    if ((fread(buf, 1, buflen, rs->rdev)) < buflen) {
+        perror("get_random_bytes");
+        goto out;
+    }
+    rc = 0;
+ out:
+    return rc;
+}
+
+int
+rand_destroy(struct rand_state *rs)
+{
+    int rc;
+
+    rc = -1;
+    if (rs && rs->rdev && fclose(rs->rdev)) {
+        perror("couldn't deinitialize random");
+        goto out;
+    }
+
+    rc = 0;
+ out:
     return rc;
 }
