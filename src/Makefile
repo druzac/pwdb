@@ -1,11 +1,3 @@
-
-# libraries:
-# -lsodium
-# -largp
-
-# sodium is _deprecated_
-# XXX still using it for the util functions
-
 pwdb: util.o db.o main.o pws.o clipb.o
 	gcc -g -o pwdb main.o pws.o util.o db.o clipb.o -framework Cocoa -largp -Llibs -ltomcrypt -Iltc_headers
 
