@@ -4,9 +4,10 @@
 # -largp
 
 # sodium is _deprecated_
+# XXX still using it for the util functions
 
-pwdb: util.o db.o file_encrypt.o main.o pws.o
-	gcc -g -o pwdb main.o pws.o util.o db.o file_encrypt.o -lsodium -largp -Llibs -ltomcrypt -Iltc_headers
+pwdb: util.o db.o main.o pws.o clipb.o
+	gcc -g -o pwdb main.o pws.o util.o db.o clipb.o -framework Cocoa -lsodium -largp -Llibs -ltomcrypt -Iltc_headers
 
 main.o: main.c
 	gcc -g -c main.c
@@ -17,16 +18,13 @@ util.o: util.c util.h
 db.o: db.c db.h
 	gcc -g -c db.c
 
-pws.o: pws.c
+pws.o: pws.c pws.h
 	gcc -g -c pws.c -Iltc_headers
 
-file_encrypt.o: file_encrypt.c file_encrypt.h
-	gcc -g -c file_encrypt.c
+clipb.o: clipb.c clipb.h
+	gcc -g -c clipb.c
 
 .PHONY: clean
-
-# pws_test: pws.c
-# 	gcc -g -o pws_test pws.c -Llibs -ltomcrypt -Iltc_headers
 
 clean:
 	rm -f *.o pwdb

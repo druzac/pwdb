@@ -6,10 +6,9 @@
 #include <fcntl.h>
 
 #include "util.h"
-#include "file_encrypt.h"
 #include "db.h"
 #include "pws.h"
-
+#include "clipb.h"
 
 #define MAX_PASS_LENGTH 64
 
@@ -68,9 +67,6 @@ struct arguments
     uuid_t uuid;
     int count;
     cmd_t cmd;
-    /* char *args[2];                /\* arg1 & arg2 *\/ */
-    /* int silent, verbose; */
-    /* char *output_file; */
 };
 
 static error_t
@@ -154,7 +150,6 @@ cmd_init(struct arguments *args)
 
     rc = -1;
 
-    /* for this, we just need a dbfile arg */
     if (!args->dbfile) {
         fprintf(stderr, "%s\n", NO_DB_FILE);
         goto out;
@@ -176,8 +171,9 @@ cmd_list(struct arguments *args)
     int rc;
     struct db *db;
     char pass[MAX_PASS_LENGTH + 1];
-    
+
     rc = -1;
+    db = NULL;
 
     if (!args->dbfile) {
         fprintf(stderr, "%s\n", NO_DB_FILE);
@@ -193,14 +189,6 @@ cmd_list(struct arguments *args)
         fprintf(stderr, "bad list\n");
         goto out;
     }
-    /* if (!(dbf = fopen(args->dbfile, "r"))) { */
-    /*     perror("failed to open db"); */
-    /*     goto out; */
-    /* } */
-
-    /* if (!(db = read_pwsdb(pass, dbf))) { */
-    /*     goto out; */
-    /* } */
 
     print_db(db);
 
@@ -292,7 +280,7 @@ cmd_retrieve(struct arguments *args)
         goto out;
     }
 
-    printf("found pass: %s\n", fndpass);
+    pb_write(fndpass);
 
     rc = 0;
  out:
