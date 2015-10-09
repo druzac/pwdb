@@ -124,8 +124,8 @@ done_random(struct rand_state *rs)
     int rc;
 
     rc = -1;
-    if (fclose(rs->rdev)) {
-        perror("done_random");
+    if (rs && rs->rdev && fclose(rs->rdev)) {
+        perror("couldn't deinitialize random");
         goto out;
     }
 
