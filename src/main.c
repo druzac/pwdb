@@ -10,6 +10,7 @@
 #include "clipb.h"
 
 #define MAX_PASS_LENGTH 64
+#define DEFAULT_PASS_LENGTH 13
 
 static char *NO_DB_FILE = "missing db file argument";
 static char *GET_PASS_FAIL = "couldn't get password";
@@ -63,6 +64,7 @@ struct arguments
 {
     char *user, *title, *dbfile;
     bool symbol;
+    bool gen_pass;
     uuid_t uuid;
     int count;
     cmd_t cmd;
@@ -99,9 +101,7 @@ parse_opt (int key, char *arg, struct argp_state *state)
       argstt->cmd = CMD_RETRIEVE;
       break;
   case 'g':
-      if (argstt->cmd)
-          argp_usage(state);
-      argstt->cmd = CMD_GENERATE;
+      argstt->gen_pass = true;
       break;
   case 'z':
       if (argstt->cmd)
@@ -226,7 +226,12 @@ cmd_insert(struct arguments *args)
         goto out;
     }
 
-    if (get_pass("enter password for account:",
+    if (args->gen_pass) {
+        if (gen_pass(new_pass, DEFAULT_PASS_LENGTH, true)) {
+            fprintf(stderr, "failed to gen pass\n");
+            goto out;
+        }
+    } else if (get_pass("enter password for account:",
                  new_pass,
                  sizeof(new_pass)/sizeof(*new_pass),
                  stdin))
