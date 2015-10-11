@@ -92,6 +92,27 @@ struct db {
 };
 
 void
+debug_db(struct db *db)
+{
+    struct field *f;
+    struct record *rec;
+    f = db->header.fields;
+
+    if (f)
+        do {
+            printf("db header field: 0x%02x\n", f->type);
+        } while ((f = f->next) != db->header.fields);
+    rec = db->records;
+    if (rec)
+        do {
+            f = rec->fields;
+            do {
+                printf("rec field: 0x%02x\n", f->type);
+            } while ((f = f->next) != rec->fields);
+        } while ((rec = rec->next) != db->records);
+}
+
+void
 print_bytes(unsigned char *buf, int buflen)
 {
     int i;
@@ -529,11 +550,13 @@ write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs,
 
     do {
         if (write_field(field, ec, rs, f)) {
-            printf("write_fields: writing a field failed\n");
+            fprintf(stderr, "write_fields: writing a field failed\n");
             goto out;
         }
         field = field->next;
     } while (field != field_head);
+
+    write_field(&eoe_field, ec, rs, f); /* write EOE field */
 
     rc = 0;
  out:
@@ -542,33 +565,30 @@ write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs,
 
 static
 int
-read_rest_fields(FILE *dbf, symmetric_CBC *sym, struct field *fields_head)
+add_field_to_header(struct db_header *hdr, struct field *f)
 {
-    struct field *field;
     int rc;
+    rc = FIELDS_ERR;
 
-    rc = -1;
-
-    do {
-        field = malloc(sizeof(*field));
-        if (!field) {
-            printf("oom\n");
-            goto out;
-        }
-
-        if (read_field(dbf, sym, field)) {
-            printf("failed to read a field\n");
-            free(field);
-            goto out;
-        }
-
-        fields_head->prev->next = field;
-        field->prev = fields_head->prev;
-        field->next = fields_head;
-        fields_head->prev = field;
-    } while (field->type != TYPE_EOE);
+    switch (f->type) {
+    case TYPE_HDR_VERSION:
+        hdr->version = read_le_uint16(f->data);
+        break;
+    case TYPE_EOE:
+        rc = FIELDS_EOE;
+        goto out;
+    }
 
     rc = 0;
+    if (hdr->fields) {
+        f->next = hdr->fields;
+        f->prev = hdr->fields->prev;
+        hdr->fields->prev->next = f;
+        hdr->fields->prev = f;
+    } else {
+        hdr->fields = f;
+        f->next = f->prev = f;
+    }
  out:
     return rc;
 }
@@ -577,46 +597,39 @@ static
 int
 read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
 {
-    int rc;
-    struct field *field, *fields_head;
+    int rc, err;
+    struct field *field;
     short version;
 
     rc = -1;
 
-    fields_head = malloc(sizeof(*fields_head));
-    if (!fields_head) {
-        printf("malloc failed\n");
+    field = malloc(sizeof(*field));
+    if (read_field(dbf, sym, field)) {
+        fprintf(stderr, "read_db_header: couldn't read field\n");
         goto out;
     }
 
-    memset(fields_head, 0, sizeof(*fields_head));
-
-    if (read_field(dbf, sym, fields_head)) {
-        printf("got some kind of problem\n");
-        free(fields_head);
+    if (field->type != TYPE_HDR_VERSION) {
+        fprintf(stderr, "bad db header format\n");
         goto out;
     }
 
-    fields_head->prev = fields_head->next = fields_head;
-    dbh->fields = fields_head;
-    /* we're expecting the first field to be the version */
-    if (fields_head->type != TYPE_HDR_VERSION) {
-        printf("bad format\n");
+    if (add_field_to_header(dbh, field))
         goto out;
-    }
 
-    version = read_le_uint16(fields_head->data);
-    if (version > VERSION) {
-        printf("version is beyond me\n");
-        goto out;
-    }
+    do {
+        if (!(field = malloc(sizeof(*field))) ||
+            read_field(dbf, sym, field))
+            goto out;
+    } while (!(err = add_field_to_header(dbh, field)));
 
-    if (read_rest_fields(dbf, sym, fields_head))
+    if (err != FIELDS_EOE)
         goto out;
 
     rc = 0;
-    dbh->version = version;
  out:
+    destroy_field(field);
+    free(field);
     return rc;
 }
 
@@ -654,10 +667,10 @@ add_field_to_record(struct record *rec, struct field *f)
         break;
     case TYPE_EOE:
         rc = FIELDS_EOE;
-        break;
+        goto out;
     }
 
-    rc = (rc != FIELDS_EOE) ? 0 : rc;
+    rc = 0;
     if (rec->fields) {
         f->next = rec->fields;
         f->prev = rec->fields->prev;
@@ -707,9 +720,9 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
         goto out;
     }
 
-    err = add_field_to_record(rec, field);
-    if (err == FIELDS_EOE) {
-        printf("read_db_record: invalid record, too early EOE\n");
+    if ((err = add_field_to_record(rec, field))) {
+        fprintf(stderr, "read_db_record: invalid record (too soon EOE) or bad field"
+                "err was %d\n", err);
         goto out;
     }
 
@@ -729,11 +742,12 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
 
     rc = 0;
  out:
-    if (rc) {
+    /* unconditionally destroy eoe field or err field */
+    destroy_field(field);
+    free(field);
+
+    if (rc)
         destroy_record(rec);
-        destroy_field(field);
-        free(field);
-    }
 
     return rc;
 }
@@ -1280,6 +1294,9 @@ pwsdb_create_new(const char *pw, char *dbpath)
     return rc;
 }
 
+/* TODO
+   can streamline this with new function add_field_to_record
+   */
 int
 pwsdb_add_record(struct db *db, const char *title, const char *pass)
 {
@@ -1317,11 +1334,6 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass)
         add_field(rec->fields, field, pass, strlen(pass), TYPE_REC_PASSWORD)) {
         free(field);
         goto out;
-    }
-
-    if (!(field = malloc(sizeof(*field))) ||
-        add_field(rec->fields, field, NULL, 0, TYPE_EOE)) {
-        free(field);
     }
 
     if (!(rec->title = strdup(title)) ||
