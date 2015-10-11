@@ -20,25 +20,29 @@
 #define ITER_BYTES 4
 #define UUID_LEN 16
 
-#define TYPE_VERSION 0x00
+/* common fields */
 #define TYPE_UUID    0x01
 #define TYPE_EOE     0xff
 
 #define DEFAULT_ITER (1 << 12)
 
-/* mandatory record fields:
-   UUID
-   password
-   title
-   */
-#define TYPE_TITLE      0x03
-#define TYPE_PASSWORD   0x06
+/* db header fields */
+#define TYPE_HDR_VERSION 0x00
+
+/* record fields */
+#define TYPE_REC_TITLE    0x03
+#define TYPE_REC_USER     0x04
+#define TYPE_REC_PASSWORD 0x06
+#define TYPE_REC_URL      0x0d
 
 #define VERSION 0x0310
 
 #define RECORDS_EOF_SENTINEL "PWS3-EOFPWS3-EOF"
 #define RECORDS_EOF          1
 #define RECORDS_ERR          2
+
+#define FIELDS_EOE           1
+#define FIELDS_ERR           2
 
 /* any typeof on android + ios? */
 
@@ -50,10 +54,17 @@ struct db_header {
     struct field *fields;
 };
 
+/* N.B
+   there is duplication in this data structure
+   the fields llist is _all_ fields
+   this is to make the computation of the db hmac easier
+   */
 struct record {
     uuid_t uuid;
     char *title;
     char *password;
+    char *username;
+    char *url;
     struct field *fields;
     struct record *next;
     struct record *prev;
@@ -65,6 +76,14 @@ struct field {
     unsigned char *data;
     struct field *next;
     struct field *prev;
+};
+
+struct field eoe_field = (struct field) {
+    .len = 0,
+    .type = TYPE_EOE,
+    .data = NULL,
+    .next = NULL,
+    .prev = NULL,
 };
 
 struct db {
@@ -107,6 +126,13 @@ print_db(struct db *db)
             record = record->next;
         } while (record != records_head);
     }
+}
+
+static void
+destroy_field(struct field *field)
+{
+    if (field)
+        free(field->data);
 }
 
 static void
@@ -155,6 +181,8 @@ destroy_record(struct record *record)
     if (record) {
         free(record->title);
         free(record->password);
+        free(record->username);
+        free(record->url);
         free_fields(record->fields);
     }
 }
@@ -372,6 +400,7 @@ __read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned cha
 
     rc = -1;
     field_data = NULL;
+    memset(field, 0, sizeof(*field)); /* TODO this is really ugly, need to fix this */
 
     if (cbc_decrypt(buf, buf, BLOCK_LEN, symkey) != CRYPT_OK) {
         printf("failed to decrypt a block\n");
@@ -422,6 +451,8 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
 {
     unsigned char buf[BLOCK_LEN];
     int rc;
+
+    memset(field, 0, sizeof(*field));
 
     if (fread(buf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
         printf("failed to read a block\n");
@@ -569,7 +600,7 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
     fields_head->prev = fields_head->next = fields_head;
     dbh->fields = fields_head;
     /* we're expecting the first field to be the version */
-    if (fields_head->type != TYPE_VERSION) {
+    if (fields_head->type != TYPE_HDR_VERSION) {
         printf("bad format\n");
         goto out;
     }
@@ -591,18 +622,67 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
 
 static
 int
-read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
+add_field_to_record(struct record *rec, struct field *f)
 {
     int rc;
+
+    rc = FIELDS_ERR;
+
+    switch (f->type) {
+    case TYPE_UUID:
+        if (f->len != UUID_LEN)
+            goto out;
+        memcpy(rec->uuid, f->data, UUID_LEN);
+        break;
+    case TYPE_REC_TITLE:
+        rec->title = strndup((char *)f->data, f->len);
+        if (!rec->title)
+            goto out;
+        break;
+    case TYPE_REC_PASSWORD:
+        rec->password = strndup((char *)f->data, f->len);
+        if (!rec->password)
+            goto out;
+        break;
+    case TYPE_REC_USER:
+        if (!(rec->username = strndup((char *)f->data, f->len)))
+            goto out;
+        break;
+    case TYPE_REC_URL:
+        if (!(rec->url = strndup((char *)f->data, f->len)))
+            goto out;
+        break;
+    case TYPE_EOE:
+        rc = FIELDS_EOE;
+        break;
+    }
+
+    rc = (rc != FIELDS_EOE) ? 0 : rc;
+    if (rec->fields) {
+        f->next = rec->fields;
+        f->prev = rec->fields->prev;
+        rec->fields->prev->next = f;
+        rec->fields->prev = f;
+    } else {
+        rec->fields = f;
+        f->next = f->prev = f;
+    }
+ out:
+    return rc;
+}
+
+static
+int
+read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
+{
+    int rc, err;
     unsigned char buf[BLOCK_LEN];
-    struct field *fields_head;
     struct field *field;
     char valid_mask;
 
     rc = RECORDS_ERR;
-    fields_head = NULL;
+    field = NULL;
     memset(rec, 0, sizeof(*rec));
-    valid_mask = 0;
 
     if (fread(buf, 1, BLOCK_LEN, dbf) < BLOCK_LEN) {
         printf("failed to read a block\n");
@@ -616,65 +696,44 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
         /* XXX make sure we don't have any cleanup above */
     }
 
-    fields_head = malloc(sizeof(*fields_head));
-    if (!fields_head) {
+    field = malloc(sizeof(*field));
+    if (!field) {
         printf("oom\n");
         goto out;
     }
-    fields_head->next = fields_head->prev = fields_head;
-    /* save now so we can free later */
-    rec->fields = fields_head;
 
-    if (__read_field(dbf, symcbc, fields_head, buf)) {
+    if (__read_field(dbf, symcbc, field, buf)) {
         printf("__read_field failed\n");
         goto out;
     }
 
-    if (fields_head->type == TYPE_EOE) {
+    err = add_field_to_record(rec, field);
+    if (err == FIELDS_EOE) {
         printf("read_db_record: invalid record, too early EOE\n");
         goto out;
     }
 
-    if (read_rest_fields(dbf, symcbc, fields_head)) {
-        printf("couldn't read remaining fields\n");
-        goto out;
-    }
-
-    /* validate the record */
-    field = fields_head;
     do {
-        switch (field->type) {
-        case TYPE_UUID:
-            if (field->len != UUID_LEN)
-                goto out;
-            memcpy(rec->uuid, field->data, UUID_LEN);
-            valid_mask |= (1 << 0);
-            break;
-        case TYPE_TITLE:
-            rec->title = strndup((char *)field->data, field->len);
-            if (!rec->title)
-                goto out;
-            valid_mask |= (1 << 1);
-            break;
-        case TYPE_PASSWORD:
-            rec->password = strndup((char *)field->data, field->len);
-            if (!rec->password)
-                goto out;
-            valid_mask |= (1 << 2);
-            break;
-        }
-        field = field->next;
-    } while (field != fields_head && valid_mask != 7);
+        if (!(field = malloc(sizeof(*field))) ||
+            read_field(dbf, symcbc, field))
+            goto out;
+    } while (!(err = add_field_to_record(rec, field)));
 
-    if (valid_mask != 7) {
-        printf("record is missing required fields, mask value: %d\n", valid_mask);
+    if (err != FIELDS_EOE)
+        goto out;
+
+    if (uuid_is_null(rec->uuid) || !rec->password || !rec->title) {
+        fprintf(stderr, "invalid record, missing required fields\n");
         goto out;
     }
 
     rc = 0;
  out:
-    if (rc)
+    if (rc) {
         destroy_record(rec);
+        destroy_field(field);
+        free(field);
+    }
 
     return rc;
 }
@@ -1117,7 +1176,7 @@ pwsdb_init(struct db *db)
         goto out;
 
     vers->len = 2;
-    vers->type = TYPE_VERSION;
+    vers->type = TYPE_HDR_VERSION;
     write_le_uint16(VERSION, vers_d);
     vers->data = vers_d;
     vers->next = vers->next = eoe;
@@ -1249,13 +1308,13 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass)
         goto out;
 
     if (!(field = malloc(sizeof(*field))) ||
-        add_field(rec->fields, field, title, strlen(title), TYPE_TITLE)) {
+        add_field(rec->fields, field, title, strlen(title), TYPE_REC_TITLE)) {
         free(field);
         goto out;
     }
 
     if (!(field = malloc(sizeof(*field))) ||
-        add_field(rec->fields, field, pass, strlen(pass), TYPE_PASSWORD)) {
+        add_field(rec->fields, field, pass, strlen(pass), TYPE_REC_PASSWORD)) {
         free(field);
         goto out;
     }
