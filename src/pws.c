@@ -514,7 +514,8 @@ write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE 
     curr_cnt = MIN(field->len, BLOCK_LEN - 5);
     memcpy(buf + 5, field->data, curr_cnt);
     if (curr_cnt + 5 < BLOCK_LEN) {
-        rand_get_bytes(rs, buf + 5 + curr_cnt, BLOCK_LEN - (curr_cnt + 5));
+        if (rand_get_bytes(rs, buf + 5 + curr_cnt, BLOCK_LEN - (curr_cnt + 5)))
+            goto out;
     }
     if (cbc_encrypt(buf, buf, BLOCK_LEN, ec) != CRYPT_OK) {
         printf("write_field: first encrypt failed\n");
@@ -530,7 +531,8 @@ write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE 
         curr_cnt = MIN(field->len - total_cnt, BLOCK_LEN);
         memcpy(buf, field->data + total_cnt, curr_cnt);
         if (curr_cnt < BLOCK_LEN) {
-            rand_get_bytes(rs, buf + curr_cnt, BLOCK_LEN - curr_cnt);
+            if (rand_get_bytes(rs, buf + curr_cnt, BLOCK_LEN - curr_cnt))
+                goto out;
         }
         if (cbc_encrypt(buf, buf, BLOCK_LEN, ec) != CRYPT_OK) {
             printf("write_field: encrypt failed\n");
@@ -976,7 +978,7 @@ read_db(struct db *db, unsigned char *db_key, unsigned char *iv, FILE *dbf)
 static int
 write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
 {
-    int rc, err;
+    int rc;
     unsigned char salt[SALT_LEN],
         pw_key[KEY_LEN],
         hashed_pw_key[KEY_LEN],
@@ -1000,8 +1002,7 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         goto out;
     }
 
-    err = rand_get_bytes(&rs, salt, SALT_LEN);
-    if (err) {
+    if (rand_get_bytes(&rs, salt, SALT_LEN)) {
         printf("failed to get gen salt\n");
         goto out;
     }

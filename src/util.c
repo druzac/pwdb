@@ -127,7 +127,7 @@ rand_get_bytes(struct rand_state *rs, unsigned char *buf, int buflen)
 
     rc = -1;
     if ((fread(buf, 1, buflen, rs->rdev)) < buflen) {
-        perror("get_random_bytes");
+        perror("rand_get_bytes");
         goto out;
     }
     rc = 0;
