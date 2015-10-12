@@ -108,6 +108,8 @@ debug_db(struct db *db)
             f = rec->fields;
             do {
                 printf("rec field: 0x%02x\n", f->type);
+                if (f->type == TYPE_REC_URL)
+                    printf("%*s\n", f->len, f->data);
             } while ((f = f->next) != rec->fields);
         } while ((rec = rec->next) != db->records);
 }
@@ -187,7 +189,7 @@ create_field(const void *data, unsigned int dlen, unsigned char type)
         goto out;
 
     memset(f, 0, sizeof(*f));
-    if (!(f->data = malloc(sizeof(dlen))))
+    if (!(f->data = malloc(dlen)))
         goto out;
 
     memcpy(f->data, data, dlen);
@@ -498,11 +500,6 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
     return rc;
 }
 
-/* TODO
-   argh there is a bug here.
-   it appears to loop...
-   at the 16 mark, it loops - writes the original stuff again, and then it's fine
-   */
 static
 int
 write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE *f)
