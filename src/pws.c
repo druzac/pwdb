@@ -144,6 +144,10 @@ print_db(struct db *db)
                    "  password: %s\n"
                    "  uuid: %s\n",
                    record->title, record->password, uuid_s);
+            if (record->username)
+                printf("  user: %s\n", record->username);
+            if (record->url)
+                printf("  url: %s\n", record->url);
             record = record->next;
         } while (record != records_head);
     }
@@ -1298,8 +1302,9 @@ pwsdb_create_new(const char *pw, char *dbpath)
 /* TODO
    can streamline this with new function add_field_to_record
    */
+/* TODO this thing looks like it has problems with the error path and freeing resources */
 int
-pwsdb_add_record(struct db *db, const char *title, const char *pass)
+pwsdb_add_record(struct db *db, const char *title, const char *pass, const char *user, const char *url)
 {
     int rc;
     struct field *field;
@@ -1336,6 +1341,20 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass)
         free(field);
         goto out;
     }
+
+    if (user)
+        if (!(field = malloc(sizeof(*field))) ||
+            add_field(rec->fields, field, user, strlen(user), TYPE_REC_USER)) {
+            free(field);
+            goto out;
+        }
+
+    if (url)
+        if (!(field = malloc(sizeof(*field))) ||
+            add_field(rec->fields, field, url, strlen(url), TYPE_REC_URL)) {
+            free(field);
+            goto out;
+        }
 
     if (!(rec->title = strdup(title)) ||
         !(rec->password = strdup(pass)))

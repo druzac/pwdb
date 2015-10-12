@@ -30,7 +30,11 @@ int
 pwsdb_init(struct db *db);
 
 int
-pwsdb_add_record(struct db *db, const char *title, const char *pass);
+pwsdb_add_record(struct db *db,
+                 const char *title,
+                 const char *pass,
+                 const char *user,
+                 const char *url);
 
 char *
 pwsdb_get_pass(struct db *db, const uuid_t uuid);

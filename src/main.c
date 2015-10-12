@@ -12,6 +12,8 @@
 #define MAX_PASS_LENGTH 64
 #define DEFAULT_PASS_LENGTH 13
 
+#define URL_CODE 256
+
 static char *NO_DB_FILE = "missing db file argument";
 static char *GET_PASS_FAIL = "couldn't get password";
 static char *PASS_PROMPT = "enter db password:";
@@ -54,6 +56,7 @@ static struct argp_option options[] = {
     {"symbol", 's', 0, 0, "allow symbols in password", 0},
     {"count", 'c', "COUNT", 0, "length for generated password", 0},
     {"user", 'u', "USER", 0, "username for entry", 0},
+    {"url", URL_CODE, "URL", 0, "url for entry", 0},
     {"uuid", 'd', "UUID", 0, "uuid for entry", 0},
     {"title", 't', "TITLE", 0, "title for entry", 0},
     {"database", 'b', "DBFILE", 0, "password database file", 0},
@@ -62,7 +65,7 @@ static struct argp_option options[] = {
 
 struct arguments
 {
-    char *user, *title, *dbfile;
+    char *user, *title, *dbfile, *url;
     bool symbol;
     bool gen_pass;
     uuid_t uuid;
@@ -129,6 +132,9 @@ parse_opt (int key, char *arg, struct argp_state *state)
       break;
   case 'b':
       argstt->dbfile = arg;
+      break;
+  case URL_CODE:
+      argstt->url = arg;
       break;
   default:
       return ARGP_ERR_UNKNOWN;
@@ -197,9 +203,6 @@ cmd_list(struct arguments *args)
     return rc;
 }
 
-/* TODO
-   add an option to automatically generate a new password here
-   */
 int
 cmd_insert(struct arguments *args)
 {
@@ -237,7 +240,7 @@ cmd_insert(struct arguments *args)
                  stdin))
         goto out;
 
-    if (pwsdb_add_record(db, args->title, new_pass)) {
+    if (pwsdb_add_record(db, args->title, new_pass, args->user, args->url)) {
         fprintf(stderr, "failed to insert into db\n");
         goto out;
     }
