@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <termios.h>
+#include <errno.h>
 
 #include "util.h"
 
@@ -59,20 +60,26 @@ int
 get_pass(char *prompt, char *pwbuf, int buf_len, FILE *stream)
 {
     struct termios old, new;
-    int rc, term_set;
+    int rc, term_set, err;
     size_t br;
 
     rc = -1;
     term_set = 0;
+    err = 0;
 
     /* Turn echoing off and fail if we can't. */
-    if (tcgetattr(fileno (stream), &old) != 0)
-        goto out;
-    new = old;
-    new.c_lflag &= ~ECHO;
-    if (tcsetattr(fileno (stream), TCSAFLUSH, &new) != 0)
-        goto out;
-    term_set = 1;
+    if (tcgetattr(fileno (stream), &old) != 0) {
+        err = errno;
+        if (err != ENOTTY)
+            goto out;
+    }
+    if (err == 0) {
+        new = old;
+        new.c_lflag &= ~ECHO;
+        if (tcsetattr(fileno (stream), TCSAFLUSH, &new) != 0)
+            goto out;
+        term_set = 1;
+    }
     
     /* Read the password. */
     printf("%s", prompt);
