@@ -888,7 +888,7 @@ static
 int
 write_db(const struct db *db, const unsigned char *db_key, const unsigned char *iv, struct rand_state *rs, FILE *dbf)
 {
-    int rc, twofish, err;
+    int rc, twofish;
     symmetric_CBC symcbc;
     struct record *records_head, *record;
 
@@ -899,7 +899,7 @@ write_db(const struct db *db, const unsigned char *db_key, const unsigned char *
         goto out;
     }
 
-    if ((err = cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc)) != CRYPT_OK) {
+    if (cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc) != CRYPT_OK) {
         printf("write_db: couldn't start cbc\n");
         goto out;
     }
