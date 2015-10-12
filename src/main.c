@@ -322,7 +322,7 @@ cmd_kill(struct arguments *args)
     }
 
     if (pwsdb_remove_record(db, args->uuid)) {
-        fprintf(stderr, "failed to insert into db\n");
+        fprintf(stderr, "failed to remove entry from db\n");
         goto out;
     }
 

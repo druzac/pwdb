@@ -176,27 +176,31 @@ free_fields(struct field *fields_head)
     }
 }
 
-static int
-add_field(struct field *fields_head, struct field *newf, const void *data, unsigned int dlen, unsigned char type)
+static struct field *
+create_field(const void *data, unsigned int dlen, unsigned char type)
 {
     int rc;
+    struct field *f;
 
     rc = -1;
-    newf->len = dlen;
-    newf->type = type;
-    if (!(newf->data = malloc(dlen))) {
-        fprintf(stderr, "couldn't malloc data for length %d\n", dlen);
+    if (!(f = malloc(sizeof(*f))))
         goto out;
-    }
 
+    memset(f, 0, sizeof(*f));
+    if (!(f->data = malloc(sizeof(dlen))))
+        goto out;
+
+    memcpy(f->data, data, dlen);
+    f->type = type;
+    f->len = dlen;
     rc = 0;
-    memcpy(newf->data, data, dlen);
-    newf->next = fields_head;
-    newf->prev = fields_head->prev;
-    fields_head->prev->next = newf;
-    fields_head->prev = newf;
  out:
-    return rc;
+    if (rc) {
+        destroy_field(f);
+        free(f);
+        f = NULL;
+    }
+    return f;
 }
 
 /* doesn't free the whole list */
@@ -494,6 +498,11 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
     return rc;
 }
 
+/* TODO
+   argh there is a bug here.
+   it appears to loop...
+   at the 16 mark, it loops - writes the original stuff again, and then it's fine
+   */
 static
 int
 write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE *f)
@@ -1175,14 +1184,14 @@ int
 pwsdb_init(struct db *db)
 {
     int rc;
-    struct field *vers, *eoe;
+    struct field *vers;
     unsigned char *vers_d;
 
     rc = -1;
 
     memset(db, 0, sizeof(*db));
     db->header.version = VERSION;
-    vers = eoe = NULL;
+    vers = NULL;
     vers_d = NULL;
 
     if (!(vers = malloc(sizeof(*vers))))
@@ -1191,19 +1200,11 @@ pwsdb_init(struct db *db)
     if (!(vers_d = malloc(2 * sizeof(*vers_d))))
         goto out;
 
-    if (!(eoe = malloc(sizeof(*eoe))))
-        goto out;
-
     vers->len = 2;
     vers->type = TYPE_HDR_VERSION;
     write_le_uint16(VERSION, vers_d);
     vers->data = vers_d;
-    vers->next = vers->next = eoe;
-
-    eoe->len = 0;
-    eoe->type = TYPE_EOE;
-    eoe->data = NULL;
-    eoe->next = eoe->prev = vers;
+    vers->next = vers->next = vers;
 
     db->header.fields = vers;
     rc = 0;
@@ -1211,7 +1212,6 @@ pwsdb_init(struct db *db)
     if (rc) {
         free(vers);
         free(vers_d);
-        free(eoe);
     }
     return rc;
 }
@@ -1312,53 +1312,35 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass, const char 
     uuid_t uuid;
 
     rc = -1;
-    rec = (struct record *) (field = NULL);
+    rec = NULL;
+    field = NULL;
 
     if (!(rec = malloc(sizeof(*rec))))
         goto out;
-
     memset(rec, 0, sizeof(*rec));
     uuid_generate_random(uuid);
-    uuid_copy(rec->uuid, uuid);
 
-    if (!(field = malloc(sizeof(*field))))
+    if (!(field = create_field((const void *)uuid, UUID_LEN, TYPE_UUID)) ||
+            add_field_to_record(rec, field))
         goto out;
 
-    memset(field, 0, sizeof(*field));
-    field->next = field->prev = field;
-    rec->fields = field;
-    if (add_field(field, field, uuid, UUID_LEN, TYPE_UUID))
+    if (!(field = create_field(title, strlen(title), TYPE_REC_TITLE)) ||
+            add_field_to_record(rec, field))
         goto out;
 
-    if (!(field = malloc(sizeof(*field))) ||
-        add_field(rec->fields, field, title, strlen(title), TYPE_REC_TITLE)) {
-        free(field);
+    if (!(field = create_field(pass, strlen(pass), TYPE_REC_PASSWORD)) ||
+            add_field_to_record(rec, field))
         goto out;
-    }
-
-    if (!(field = malloc(sizeof(*field))) ||
-        add_field(rec->fields, field, pass, strlen(pass), TYPE_REC_PASSWORD)) {
-        free(field);
-        goto out;
-    }
 
     if (user)
-        if (!(field = malloc(sizeof(*field))) ||
-            add_field(rec->fields, field, user, strlen(user), TYPE_REC_USER)) {
-            free(field);
+        if (!(field = create_field(user, strlen(user), TYPE_REC_USER)) ||
+                add_field_to_record(rec, field))
             goto out;
-        }
 
     if (url)
-        if (!(field = malloc(sizeof(*field))) ||
-            add_field(rec->fields, field, url, strlen(url), TYPE_REC_URL)) {
-            free(field);
+        if (!(field = create_field(url, strlen(url), TYPE_REC_URL)) ||
+                add_field_to_record(rec, field))
             goto out;
-        }
-
-    if (!(rec->title = strdup(title)) ||
-        !(rec->password = strdup(pass)))
-        goto out;
 
     rc = 0;
     if (db->records) {
@@ -1374,6 +1356,8 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass, const char 
     if (rc) {
         destroy_record(rec);
         free(rec);
+        destroy_field(field);
+        free(field);
     }
     return rc;
 }
