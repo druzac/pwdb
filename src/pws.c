@@ -556,7 +556,8 @@ write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs,
         field = field->next;
     } while (field != field_head);
 
-    write_field(&eoe_field, ec, rs, f); /* write EOE field */
+    if (write_field(&eoe_field, ec, rs, f)) /* write EOE field */
+        goto out;
 
     rc = 0;
  out:
