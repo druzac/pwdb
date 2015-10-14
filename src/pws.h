@@ -3,7 +3,39 @@
 
 #include <uuid/uuid.h>
 
-struct db;
+struct db_header {
+    short version;
+    struct field *fields;
+};
+
+/* N.B
+   there is duplication in this data structure
+   the fields llist is _all_ fields
+   this is to make the computation of the db hmac easier
+   */
+struct record {
+    uuid_t uuid;
+    char *title;
+    char *password;
+    char *username;
+    char *url;
+    struct field *fields;
+    struct record *next;
+    struct record *prev;
+};
+
+struct field {
+    unsigned int len;
+    unsigned char type;
+    unsigned char *data;
+    struct field *next;
+    struct field *prev;
+};
+
+struct db {
+    struct db_header header;
+    struct record *records;
+};
 
 void
 print_db(struct db *db);

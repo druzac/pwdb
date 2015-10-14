@@ -49,46 +49,12 @@
 /* MIN is defined in tomcrypt_macros */
 /* #define MIN(a, b) (((a) < (b)) ? (a) : (b)) */
 
-struct db_header {
-    short version;
-    struct field *fields;
-};
-
-/* N.B
-   there is duplication in this data structure
-   the fields llist is _all_ fields
-   this is to make the computation of the db hmac easier
-   */
-struct record {
-    uuid_t uuid;
-    char *title;
-    char *password;
-    char *username;
-    char *url;
-    struct field *fields;
-    struct record *next;
-    struct record *prev;
-};
-
-struct field {
-    unsigned int len;
-    unsigned char type;
-    unsigned char *data;
-    struct field *next;
-    struct field *prev;
-};
-
 struct field eoe_field = (struct field) {
     .len = 0,
     .type = TYPE_EOE,
     .data = NULL,
     .next = NULL,
     .prev = NULL,
-};
-
-struct db {
-    struct db_header header;
-    struct record *records;
 };
 
 void

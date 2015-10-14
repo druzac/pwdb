@@ -1,5 +1,8 @@
-pwdb: util.o main.o pws.o clipb.o
-	gcc -g -o pwdb main.o pws.o util.o clipb.o -framework Cocoa -largp -Llib -ltomcrypt -Iinclude
+# Weverything is super noisy
+# also clang only?
+
+pwdb: util.o main.o pws.o clipb.o pwcurs.o
+	gcc -g -o pwdb main.o pwcurs.o pws.o util.o clipb.o -framework Cocoa -largp -lmenu -lncurses -Llib -ltomcrypt -Iinclude
 
 main.o: main.c
 	gcc -g -c main.c
@@ -12,6 +15,9 @@ pws.o: pws.c pws.h util.h
 
 clipb.o: clipb.c clipb.h
 	gcc -g -c clipb.c
+
+pwcurs.o: pwcurs.c pwcurs.h util.h pws.h clipb.h
+	gcc -g -c pwcurs.c
 
 .PHONY: clean
 

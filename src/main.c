@@ -8,11 +8,13 @@
 #include "util.h"
 #include "pws.h"
 #include "clipb.h"
+#include "pwcurs.h"
 
 #define MAX_PASS_LENGTH 64
 #define DEFAULT_PASS_LENGTH 13
 
-#define URL_CODE 256
+#define CLI_URL_CODE 256
+#define CLI_INTERACTIVE_CODE 257
 
 static char *NO_DB_FILE = "missing db file argument";
 static char *GET_PASS_FAIL = "couldn't get password";
@@ -43,7 +45,13 @@ static char *PASS_PROMPT = "enter db password:";
 /* -c length of generated password */
 /* -s use symbols */
 
-typedef enum {CMD_LIST, CMD_INSERT, CMD_RETRIEVE, CMD_GENERATE, CMD_INIT, CMD_KILL} cmd_t;
+typedef enum {CMD_LIST,
+              CMD_INSERT,
+              CMD_RETRIEVE,
+              CMD_GENERATE,
+              CMD_INIT,
+              CMD_KILL,
+              CMD_INTERACTIVE} cmd_t;
 
 static struct argp_option options[] = {
     {"list", 'l', 0, 0, "list entries in db", 0},
@@ -52,11 +60,12 @@ static struct argp_option options[] = {
     {"generate", 'g', 0, 0, "generate a password", 0},
     {"initialize", 'z', 0, 0, "initialize a new db file", 0},
     {"kill", 'k', 0, 0, "remove an entry from the db", 0},
+    {"interactive", CLI_INTERACTIVE_CODE, 0, 0, "run ncurses app", 0},
 
     {"symbol", 's', 0, 0, "allow symbols in password", 0},
     {"count", 'c', "COUNT", 0, "length for generated password", 0},
     {"user", 'u', "USER", 0, "username for entry", 0},
-    {"url", URL_CODE, "URL", 0, "url for entry", 0},
+    {"url", CLI_URL_CODE, "URL", 0, "url for entry", 0},
     {"uuid", 'd', "UUID", 0, "uuid for entry", 0},
     {"title", 't', "TITLE", 0, "title for entry", 0},
     {"database", 'b', "DBFILE", 0, "password database file", 0},
@@ -133,8 +142,13 @@ parse_opt (int key, char *arg, struct argp_state *state)
   case 'b':
       argstt->dbfile = arg;
       break;
-  case URL_CODE:
+  case CLI_URL_CODE:
       argstt->url = arg;
+      break;
+  case CLI_INTERACTIVE_CODE:
+      if (argstt->cmd)
+          argp_usage(state);
+      argstt->cmd = CMD_INTERACTIVE;
       break;
   default:
       return ARGP_ERR_UNKNOWN;
@@ -142,8 +156,7 @@ parse_opt (int key, char *arg, struct argp_state *state)
   return 0;
 }
 
-static char doc[] =
-    "pwd - password database";
+static char doc[] = "pwd - password database";
 
 static struct argp argp = {options, parse_opt, 0, doc};
 
@@ -301,7 +314,7 @@ cmd_kill(struct arguments *args)
 {
     int rc;
     struct db *db;
-    char pass[MAX_PASS_LENGTH + 1], *fndpass;
+    char pass[MAX_PASS_LENGTH + 1];
 
     rc = -1;
     db = NULL;
@@ -340,6 +353,39 @@ cmd_kill(struct arguments *args)
 }
 
 int
+cmd_interactive(struct arguments *args)
+{
+    int rc;
+    struct db *db;
+    char pass[MAX_PASS_LENGTH + 1];
+
+    rc = -1;
+    db = NULL;
+
+    if (!args->dbfile) {
+        fprintf(stderr, "missing db path\n");
+        goto out;
+    }
+
+    if (get_pass(PASS_PROMPT, pass, MAX_PASS_LENGTH + 1, stdin)) {
+        fprintf(stderr, "%s\n", GET_PASS_FAIL);
+        goto out;
+    }
+
+    if (!(db = pwsdb_open(pass, args->dbfile))) {
+        fprintf(stderr, "couldn't open db\n");
+        goto out;
+    }
+
+    rc = pwcurs_start(args->dbfile, pass, db);
+
+ out:
+    destroy_db(db);
+    free(db);
+    return rc;
+}
+
+int
 main(int argc, char **argv)
 {
     struct arguments args;
@@ -363,6 +409,9 @@ main(int argc, char **argv)
         break;
     case CMD_KILL:
         rc = cmd_kill(&args);
+        break;
+    case CMD_INTERACTIVE:
+        rc = cmd_interactive(&args);
         break;
     default:
         fprintf(stderr, "invalid command\n");
