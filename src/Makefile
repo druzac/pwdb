@@ -2,7 +2,7 @@
 # also clang only?
 
 pwdb: util.o main.o pws.o clipb.o pwcurs.o
-	gcc -g -o pwdb main.o pwcurs.o pws.o util.o clipb.o -framework Cocoa -largp -lmenu -lncurses -Llib -ltomcrypt -Iinclude
+	gcc -g -o pwdb main.o pwcurs.o pws.o util.o clipb.o -framework Cocoa -largp -lmenu -lform -lncurses -Llib -ltomcrypt -Iinclude
 
 main.o: main.c
 	gcc -g -c main.c
