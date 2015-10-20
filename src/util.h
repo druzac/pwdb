@@ -20,4 +20,6 @@ rand_destroy(struct rand_state *rs);
 int
 rand_get_bytes(struct rand_state *rs, unsigned char *buf, int buflen);
 
+#define ARRSIZE(arr) (sizeof(arr) / sizeof(*arr))
+
 #endif

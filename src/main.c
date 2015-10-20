@@ -379,6 +379,8 @@ cmd_interactive(struct arguments *args)
 
     rc = pwcurs_start(args->dbfile, pass, db);
 
+    print_db(db);
+
  out:
     destroy_db(db);
     free(db);
