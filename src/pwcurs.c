@@ -64,14 +64,31 @@ show_form_labels()
 {
     int i;
 
-    /* fields[i] = new_field(1, WIDTH, STARTY + i * 2, STARTX, 0, 0); */
-    /* I don't think this is right */
-    for (i = 0; i < ARRSIZE(labels); ++i) {
+    for (i = 0; i < ARRSIZE(labels); ++i)
         mvprintw(STARTY + i * 2, STARTX - 1 - strlen(labels[i]), labels[i]);
-    }
 
-    /* TODO check return code of mvprintw */
+    /* TODO check return code of mvprintw? */
     return 0;
+}
+
+static
+int
+update_mfield(FIELD *mfield, char **rfield)
+{
+    int rc;
+    char *new_str;
+    char *old_rec_field;
+
+    rc = -1;
+
+    set_field_status(mfield, 0);
+    new_str = strdup_stripr(field_buffer(mfield, 0));
+    free(*rfield);
+    *rfield = new_str;
+
+    rc = 0;
+ out:
+    return rc;
 }
 
 /* F1 - leave w/o saving */
@@ -116,17 +133,15 @@ record_screen(struct record *rec, FORM *rec_form, FIELD **fields)
             break;
         }
     }
-    /* just do it for the first guy for now */
-    if (field_status(fields[0])) {
-        char *new_str;
-        char *old_rec_field;
+    if (field_status(fields[0]))
+        update_mfield(fields[0], &rec->title);
+    if (field_status(fields[1]))
+        update_mfield(fields[1], &rec->username);
+    if (field_status(fields[2]))
+        update_mfield(fields[2], &rec->password);
+    if (field_status(fields[3]))
+        update_mfield(fields[3], &rec->url);
 
-        set_field_status(fields[0], 0);
-
-        new_str = strdup_stripr(field_buffer(fields[0], 0));
-        free(rec->title);
-        rec->title = new_str;
-    }
     unpost_form(rec_form);
 
     rc = 0;
