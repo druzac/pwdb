@@ -8,11 +8,6 @@ struct db_header {
     struct field *fields;
 };
 
-/* N.B
-   there is duplication in this data structure
-   the fields llist is _all_ fields
-   this is to make the computation of the db hmac easier
-   */
 struct record {
     uuid_t uuid;
     char *title;
