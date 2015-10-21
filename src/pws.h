@@ -58,7 +58,7 @@ pwsdb_create_new(const char *pw, char *dbpath);
 
 /* make a new db */
 /* needs to set up db header with a version field */
-int
+void
 pwsdb_init(struct db *db);
 
 int
