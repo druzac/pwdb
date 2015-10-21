@@ -58,7 +58,7 @@ static struct argp_option options[] = {
     {"insert", 'i', 0, 0, "put new entry into db", 0},
     {"retrieve", 'r', 0, 0, "get a password from db", 0},
     {"generate", 'g', 0, 0, "generate a password", 0},
-    {"initialize", 'z', 0, 0, "initialize a new db file", 0},
+    {"init", 'z', 0, 0, "initialize a new db file", 0},
     {"kill", 'k', 0, 0, "remove an entry from the db", 0},
     {"interactive", CLI_INTERACTIVE_CODE, 0, 0, "run ncurses app", 0},
 
@@ -259,7 +259,7 @@ cmd_insert(struct arguments *args)
     }
 
     if (pwsdb_save(db, master_pass, args->dbfile)) {
-        fprintf(stderr, "couldn't save db");
+        fprintf(stderr, "couldn't save db\n");
         goto out;
     }
 

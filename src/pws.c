@@ -387,7 +387,7 @@ decrypt_key(unsigned char *key, unsigned char *ct, unsigned char *out)
    */
 static
 int
-__read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned char *buf)
+__read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned char *buf, hmac_state *hmac)
 {
     unsigned char *field_data;
     unsigned char field_type;
@@ -432,6 +432,10 @@ __read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned cha
         rem_bytes = rem_bytes - 16;
     }
 
+    if (field_len)
+        if (hmac_process(hmac, field_data, field_len) != CRYPT_OK)
+            goto out;
+
     rc = 0;
     field->len = field_len;
     field->type = field_type;
@@ -444,7 +448,7 @@ __read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, unsigned cha
 
 static
 int
-read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
+read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field, hmac_state *hmac)
 {
     unsigned char buf[BLOCK_LEN];
     int rc;
@@ -456,7 +460,7 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
         goto out;
     }
 
-    if (__read_field(dbf, symkey, field, buf)) {
+    if (__read_field(dbf, symkey, field, buf, hmac)) {
         printf("__read_field failed\n");
         goto out;
     }
@@ -468,7 +472,7 @@ read_field(FILE *dbf, symmetric_CBC *symkey, struct field *field)
 
 static
 int
-write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE *f)
+write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, hmac_state *hmac, FILE *f)
 {
     int rc, total_cnt, curr_cnt;
     unsigned char buf[BLOCK_LEN];
@@ -511,6 +515,9 @@ write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE 
         total_cnt += curr_cnt;
     }
 
+    if (field->len && hmac_process(hmac, field->data, field->len) != CRYPT_OK)
+        goto out;
+
     rc = 0;
  out:
     return rc;
@@ -518,7 +525,7 @@ write_field(struct field *field, symmetric_CBC *ec, struct rand_state *rs, FILE 
 
 static
 int
-write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs, FILE *f)
+write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs, hmac_state *hmac, FILE *f)
 {
     int rc;
     struct field *field;
@@ -527,14 +534,14 @@ write_fields(struct field *field_head, symmetric_CBC *ec, struct rand_state *rs,
     field = field_head;
 
     do {
-        if (write_field(field, ec, rs, f)) {
+        if (write_field(field, ec, rs, hmac, f)) {
             fprintf(stderr, "write_fields: writing a field failed\n");
             goto out;
         }
         field = field->next;
     } while (field != field_head);
 
-    if (write_field(&eoe_field, ec, rs, f)) /* write EOE field */
+    if (write_field(&eoe_field, ec, rs, hmac, f)) /* write EOE field */
         goto out;
 
     rc = 0;
@@ -574,7 +581,7 @@ add_field_to_header(struct db_header *hdr, struct field *f)
 
 static
 int
-read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
+read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh, hmac_state *hmac)
 {
     int rc, err;
     struct field *field;
@@ -583,7 +590,7 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
     rc = -1;
 
     field = malloc(sizeof(*field));
-    if (read_field(dbf, sym, field)) {
+    if (read_field(dbf, sym, field, hmac)) {
         fprintf(stderr, "read_db_header: couldn't read field\n");
         goto out;
     }
@@ -598,7 +605,7 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh)
 
     do {
         if (!(field = malloc(sizeof(*field))) ||
-            read_field(dbf, sym, field))
+            read_field(dbf, sym, field, hmac))
             goto out;
     } while (!(err = add_field_to_header(dbh, field)));
 
@@ -665,7 +672,7 @@ add_field_to_record(struct record *rec, struct field *f)
 
 static
 int
-read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
+read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec, hmac_state *hmac)
 {
     int rc, err;
     unsigned char buf[BLOCK_LEN];
@@ -694,7 +701,7 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
         goto out;
     }
 
-    if (__read_field(dbf, symcbc, field, buf)) {
+    if (__read_field(dbf, symcbc, field, buf, hmac)) {
         printf("__read_field failed\n");
         goto out;
     }
@@ -707,7 +714,7 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
 
     do {
         if (!(field = malloc(sizeof(*field))) ||
-            read_field(dbf, symcbc, field))
+            read_field(dbf, symcbc, field, hmac))
             goto out;
     } while (!(err = add_field_to_record(rec, field)));
 
@@ -733,7 +740,7 @@ read_db_record(FILE *dbf, symmetric_CBC *symcbc, struct record *rec)
 
 static
 int
-read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
+read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db, hmac_state *hmac)
 {
     struct record *records_head;
 
@@ -747,7 +754,7 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
         goto out;
     }
 
-    err = read_db_record(dbf, symcbc, records_head);
+    err = read_db_record(dbf, symcbc, records_head, hmac);
 
     if (err == RECORDS_ERR) {
         printf("err reading record\n");
@@ -771,7 +778,7 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
                 goto out;
             }
 
-            err = read_db_record(dbf, symcbc, record);
+            err = read_db_record(dbf, symcbc, record, hmac);
             if (err == RECORDS_ERR) {
                 free(record);
                 goto out;
@@ -794,77 +801,12 @@ read_db_records(FILE *dbf, symmetric_CBC *symcbc, struct db *db)
     return rc;
 }
 
-static
-int
-hmac_db(const struct db *db, unsigned char *digest_key, unsigned char *digest)
-{
-    int rc;
-    hmac_state hmac;
-    int hashfcn;
-    struct field *field;
-    struct record *record;
-    unsigned long dlen;
-
-    dlen = DIGEST_LEN;
-    rc = -1;
-
-    if ((hashfcn = register_hash(&sha256_desc)) == -1) {
-        printf("couldn't register hash\n");
-        goto out;
-    }
-
-    if (hmac_init(&hmac, hashfcn, digest_key, KEY_LEN) != CRYPT_OK) {
-        printf("couldn't init digest\n");
-        goto out;
-    }
-
-    field = db->header.fields;
-    /* must have the version at least */
-    do {
-        if (field->len)
-            if (hmac_process(&hmac, field->data, field->len) != CRYPT_OK) {
-                printf("couldn't hash field\n");
-                goto out;
-            }
-        field = field->next;
-    } while (field != db->header.fields);
-
-    record = db->records;
-    if (record) {
-        do {
-            field = record->fields;
-            do {
-                if (hmac_process(&hmac, field->data, field->len) != CRYPT_OK) {
-                    printf("couldn't hash field\n");
-                    goto out;
-                }
-                field = field->next;
-            } while (field != record->fields);
-            record = record->next;
-        } while (record != db->records);
-    }
-
-    if (hmac_done(&hmac, digest, &dlen) != CRYPT_OK) {
-        printf("couldn't finish digest\n");
-        goto out;
-    }
-
-    if (dlen != DIGEST_LEN) {
-        printf("what the beef, dlen got changed\n");
-        goto out;
-    }
-
-    rc = 0;
- out:
-    return rc;
-}
-
 /* symmetry with read_db
    so this guy should write the EOF marker when he's done writing the db records
    */
 static
 int
-write_db(const struct db *db, const unsigned char *db_key, const unsigned char *iv, struct rand_state *rs, FILE *dbf)
+write_db(const struct db *db, const unsigned char *db_key, const unsigned char *iv, struct rand_state *rs, hmac_state *hmac, FILE *dbf)
 {
     int rc, twofish;
     symmetric_CBC symcbc;
@@ -882,7 +824,7 @@ write_db(const struct db *db, const unsigned char *db_key, const unsigned char *
         goto out;
     }
 
-    if (write_fields(db->header.fields, &symcbc, rs, dbf)) {
+    if (write_fields(db->header.fields, &symcbc, rs, hmac, dbf)) {
         printf("write_db: failed to write header fields\n");
         goto out;
     }
@@ -890,7 +832,7 @@ write_db(const struct db *db, const unsigned char *db_key, const unsigned char *
     record = records_head = db->records;
     if (record) {
         do {
-            if (write_fields(record->fields, &symcbc, rs, dbf)) {
+            if (write_fields(record->fields, &symcbc, rs, hmac, dbf)) {
                 printf("write_db: failed to write a record\n");
                 goto out;
             }
@@ -909,7 +851,7 @@ write_db(const struct db *db, const unsigned char *db_key, const unsigned char *
 }
 
 static int
-read_db(struct db *db, unsigned char *db_key, unsigned char *iv, FILE *dbf)
+read_db(struct db *db, unsigned char *db_key, unsigned char *iv, FILE *dbf, hmac_state *hmac)
 {
     symmetric_CBC symcbc;
     int twofish, rc;
@@ -923,12 +865,12 @@ read_db(struct db *db, unsigned char *db_key, unsigned char *iv, FILE *dbf)
 
     cbc_start(twofish, iv, db_key, KEY_LEN, 0, &symcbc);
 
-    if (read_db_header(dbf, &symcbc, &db->header)) {
+    if (read_db_header(dbf, &symcbc, &db->header, hmac)) {
         printf("problem reading header\n");
         goto dereg_cipher;
     }
 
-    if (read_db_records(dbf, &symcbc, db)) {
+    if (read_db_records(dbf, &symcbc, db, hmac)) {
         printf("problem reading db records\n");
         goto dereg_cipher;
     }
@@ -944,7 +886,7 @@ read_db(struct db *db, unsigned char *db_key, unsigned char *iv, FILE *dbf)
 static int
 write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
 {
-    int rc;
+    int rc, hashfcn;
     unsigned char salt[SALT_LEN],
         pw_key[KEY_LEN],
         hashed_pw_key[KEY_LEN],
@@ -954,9 +896,12 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         iv[BLOCK_LEN],
         file_digest[DIGEST_LEN];
     struct rand_state rs;
+    unsigned long dlen;
+    hmac_state hmac;
 
     memset(&rs, 0, sizeof(rs));
     rc = -1;
+    dlen = DIGEST_LEN;
 
     if (rand_init(&rs)) {
         perror("init_random");
@@ -1021,13 +966,20 @@ write_pwsdb(const struct db *db, const char *pw, unsigned int iter, FILE *dbf)
         goto out;
     }
 
-    if (write_db(db, db_key, iv, &rs, dbf)) {
+    if ((hashfcn = register_hash(&sha256_desc)) == -1 ||
+        hmac_init(&hmac, hashfcn, digest_key, KEY_LEN) != CRYPT_OK) {
+        printf("couldn't init digest stuff\n");
+        goto out;
+    }
+
+    if (write_db(db, db_key, iv, &rs, &hmac, dbf)) {
         printf("failed to write db\n");
         goto out;
     }
 
-    if (hmac_db(db, digest_key, file_digest)) {
-        printf("failed to make file digest\n");
+    if (hmac_done(&hmac, file_digest, &dlen) != CRYPT_OK ||
+        dlen != DIGEST_LEN) {
+        printf("couldn't finish digest\n");
         goto out;
     }
 
@@ -1057,9 +1009,13 @@ read_pwsdb(struct db *db, const char *pw, FILE *dbf)
         iv[BLOCK_LEN],
         their_digest[DIGEST_LEN],
         my_digest[DIGEST_LEN];
+    hmac_state hmac;
+    int hashfcn;
+    unsigned long dlen;
 
     rc = -1;
     memset(db, 0, sizeof(*db));
+    dlen = DIGEST_LEN;
 
     if (fread(tagbuf, 1, PWS_TAG_LEN, dbf) < PWS_TAG_LEN) {
         printf("failed to read tag\n");
@@ -1116,7 +1072,17 @@ read_pwsdb(struct db *db, const char *pw, FILE *dbf)
         goto out;
     }
 
-    if (read_db(db, db_key, iv, dbf))
+    if ((hashfcn = register_hash(&sha256_desc)) == -1) {
+        printf("couldn't register hash\n");
+        goto out;
+    }
+
+    if (hmac_init(&hmac, hashfcn, digest_key, KEY_LEN) != CRYPT_OK) {
+        printf("couldn't init digest\n");
+        goto out;
+    }
+
+    if (read_db(db, db_key, iv, dbf, &hmac))
         goto out;
 
     if (fread(their_digest, DIGEST_LEN, 1, dbf) < 1) {
@@ -1124,8 +1090,9 @@ read_pwsdb(struct db *db, const char *pw, FILE *dbf)
         goto out;
     }
 
-    if (hmac_db(db, digest_key, my_digest)) {
-        printf("couldn't verify db\n");
+    if (hmac_done(&hmac, my_digest, &dlen) != CRYPT_OK ||
+        dlen != DIGEST_LEN) {
+        printf("couldn't finish digest\n");
         goto out;
     }
 
