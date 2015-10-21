@@ -1284,9 +1284,6 @@ pwsdb_create_new(const char *pw, char *dbpath)
     return rc;
 }
 
-/* TODO
-   can streamline this with new function add_field_to_record
-   */
 int
 pwsdb_add_record(struct db *db, const char *title, const char *pass, const char *user, const char *url)
 {
