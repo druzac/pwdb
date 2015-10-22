@@ -1,25 +1,19 @@
 # Weverything is super noisy
 # also clang only?
 
-pwdb: util.o main.o pws.o clipb.o pwcurs.o
-	gcc -g -o pwdb main.o pwcurs.o pws.o util.o clipb.o -framework Cocoa -largp -lmenu -lform -lncurses -Llib -ltomcrypt -Iinclude
+CC = gcc
+CFLAGS = -g -Iinclude
+LDLIBS = -framework Cocoa -largp -lmenu -lform -lncurses -Llib -ltomcrypt
 
-main.o: main.c
-	gcc -g -c main.c
+OBJECTS = util.o pwdb.o pws.o clipb.o pwcurs.o
 
-util.o: util.c util.h
-	gcc -g -c util.c
-
-pws.o: pws.c pws.h util.h
-	gcc -g -c pws.c -Iinclude
-
-clipb.o: clipb.c clipb.h
-	gcc -g -c clipb.c
-
-pwcurs.o: pwcurs.c pwcurs.h util.h pws.h clipb.h
-	gcc -g -c pwcurs.c
+pwdb: $(OBJECTS)
+pws.o: pws.h util.h
+pwdb.o: util.h pws.h clipb.h pwcurs.h
+util.o: util.h
+clipb.o: clipb.h
+pwcurs.o: pwcurs.h util.h pws.h clipb.h
 
 .PHONY: clean
-
 clean:
-	rm -f *.o pwdb
+	rm -f pwdb $(OBJECTS)
