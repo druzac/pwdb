@@ -696,8 +696,6 @@ read_db_header(FILE *dbf, symmetric_CBC *sym, struct db_header *dbh, hmac_state 
     if (err != FIELDS_EOE)
         goto out;
 
-    printf("read_db_header: field pointer is %p\n", dbh->fields);
-    printf("version is: 0x%x\n", dbh->version);
     rc = 0;
  out:
     destroy_field(&field);
@@ -1285,7 +1283,12 @@ pwsdb_create_new(const char *pw, char *dbpath)
 }
 
 int
-pwsdb_add_record(struct db *db, const char *title, const char *pass, const char *user, const char *url)
+pwsdb_add_record(struct db *db,
+                 const char *title,
+                 const char *pass,
+                 const char *user,
+                 const char *url,
+                 uuid_t uuid_out)
 {
     int rc;
     struct record *rec;
@@ -1319,6 +1322,7 @@ pwsdb_add_record(struct db *db, const char *title, const char *pass, const char 
         rec->next = rec->prev = rec;
         db->records = rec;
     }
+    uuid_copy(uuid_out, uuid);
  out:
     if (rc) {
         destroy_record(rec);

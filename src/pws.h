@@ -61,7 +61,8 @@ pwsdb_add_record(struct db *db,
                  const char *title,
                  const char *pass,
                  const char *user,
-                 const char *url);
+                 const char *url,
+                 uuid_t uuid);  /* OUT */
 
 char *
 pwsdb_get_pass(struct db *db, const uuid_t uuid);

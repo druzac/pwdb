@@ -223,6 +223,7 @@ cmd_insert(struct arguments *args)
     struct db *db;
     char master_pass[MAX_PASS_LENGTH + 1];
     char new_pass[MAX_PASS_LENGTH + 1];
+    uuid_t uuid;
 
     rc = -1;
     db = NULL;
@@ -253,7 +254,7 @@ cmd_insert(struct arguments *args)
                  stdin))
         goto out;
 
-    if (pwsdb_add_record(db, args->title, new_pass, args->user, args->url)) {
+    if (pwsdb_add_record(db, args->title, new_pass, args->user, args->url, uuid)) {
         fprintf(stderr, "failed to insert into db\n");
         goto out;
     }
