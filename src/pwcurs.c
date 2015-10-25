@@ -231,9 +231,10 @@ pwcurs_start(const char *dbpath, char *pass, struct db *db)
             rec_items[item_idx] = new_item(rec->title, "");
             set_item_userptr(rec_items[item_idx], rec);
             set_menu_items(entries_menu, rec_items);
-            set_current_item(entries_menu, rec_items[item_idx]);
 
             post_menu(entries_menu);
+            for (i = 0; i < item_idx; i++) /* manual reset of chosen item */
+                menu_driver(entries_menu, REQ_DOWN_ITEM);
             break;
         }
     }
