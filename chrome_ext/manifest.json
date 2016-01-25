@@ -1,0 +1,26 @@
+{
+    "manifest_version": 2,
+    "name": "password db",
+    "version": "1.0",
+
+    "description": "interact with a passwordsafe db directly in chrome using the context menu",
+
+    "browser_action": {
+        "default_icon": {"19": "icon.png"},
+        "default_popup": "popup.html",
+        "default_title": "pwdb"
+    },
+
+    "content_scripts": [
+        {"matches": ["*://*/*"],
+         "js": ["rclick.js"]}],
+
+    "background": {"page": "pwdb.html"},
+
+    "permissions": [
+        "activeTab",
+        "contextMenus",
+        "https://ajax.googleapis.com/",
+        "tabs"
+    ]
+}

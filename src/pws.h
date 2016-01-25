@@ -38,9 +38,6 @@ print_db(struct db *db);
 void
 destroy_db(struct db *db);
 
-int
-read_pwsdb(struct db *db, const char *pw, FILE *dbf);
-
 struct db *
 pwsdb_open(const char *pw, const char *dbpath);
 
@@ -51,7 +48,7 @@ pwsdb_save(const struct db *db, const char *pw, char *dbpath);
 int
 pwsdb_create_new(const char *pw, char *dbpath);
 
-/* make a new db */
+/* initialize a new db obj in memory */
 /* needs to set up db header with a version field */
 void
 pwsdb_init(struct db *db);

@@ -1,0 +1,12 @@
+[package]
+name = "pwdbsrv"
+version = "0.1.0"
+authors = ["zach <zachdrudi@gmail.com>"]
+links = "pwdb"
+build = "build.rs"
+
+[dependencies]
+hyper = "0.7.1"
+libc = "0.2.4"
+rustc-serialize = "0.3.16"
+uuid = "0.1.18"

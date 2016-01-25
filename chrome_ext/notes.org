@@ -1,0 +1,5 @@
+goal:
+* TODO get the message passing working
+  right click on an editable field - print using console.log
+
+sendMessage - what do i send?
