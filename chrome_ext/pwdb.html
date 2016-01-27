@@ -1,22 +1,31 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Login</title>
+  <title>pwdb</title>
   <script src="pwdb.js"></script>
 </head>
 <body>
-  <div>
-    <label for="name">Password:</label>
+  <div id="login">
+    <label for="pw">DB Password:</label>
     <input type="password" id="pw" />
-    <button id="init">go</button>
+    <button id="init">Open DB</button>
   </div>
-  <p id="test_par">this is my text</p>
-
-  <!-- list of all   -->
-  <select name="select" id="entries">
-    <!-- <option value="value1">Value 1</option>  -->
-    <!-- <option value="value2" selected>Value 2</option> -->
-    <!-- <option value="value3">Value 3</option> -->
-  </select>
+  <div id="entries_menu">
+    <select name="select" id="entries"></select>
+    <button id="edit">edit entry</button>
+    <button id="add">add new entry</button>
+    <button id="delete">remove entry</button>
+  </div>
+  <div id="zoom_entry">
+    <form>
+      <label for="entry_title">Title:</label>
+      <input id="entry_title" type="text"></input>
+      <label for="entry_password">Password:</label>
+      <input id="entry_password" type="password"></input>
+      <label for="entry_uuid">UUID:</label>
+      <input id="entry_uuid" type="text" readonly=true></input>
+    </form>
+    <button id="toggle_password">toggle show password</button>
+  </div>
 </body>
 </html>

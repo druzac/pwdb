@@ -1,8 +1,13 @@
-// take the password from the field
-// make an http request to pwdbsrv
-// dump all logins to the webpage somehow
-
 var db = undefined;
+
+function dbLookup(uuid) {
+    if (db === undefined)
+        return null;
+    for (var i = 0; i < db.length; i++) {
+        if (db[i].uuid === uuid)
+            return db[i];
+    }
+}
 
 function updateSelection(selectEl) {
     var n_children = selectEl.children.length;
@@ -15,7 +20,7 @@ function updateSelection(selectEl) {
         opt.innerText = db[i].title;
         selectEl.appendChild(opt);
     }
-};
+}
 
 function contextMenuTest(info) {
     console.log("menu item id: " + info.menuItemId);
@@ -28,7 +33,7 @@ function contextMenuTest(info) {
             break;
         }
     }
-};
+}
 
 function updateContextMenus() {
     chrome.contextMenus.removeAll(function() {
@@ -39,17 +44,14 @@ function updateContextMenus() {
                                         "onclick": contextMenuTest});
         }
     });
-};
+}
 
 function rewriteStuff(e) {
     var par = document.getElementById("test_par");
     var pw_field = document.getElementById("pw");
-    // par.textContent = "you entered: " + pw_field.value;
     pwdbGetDump(pw_field.value, par);
-    // chrome.tabs.create({url: "login.html"});
 };
 
-// copy pasted from popup.js
 function pwdbGetDump(pw, item) {
     var x = new XMLHttpRequest();
     x.onreadystatechange = function() {
@@ -57,32 +59,47 @@ function pwdbGetDump(pw, item) {
             console.log("ready state: " + x.readyState);
             var data = JSON.parse(x.responseText);
             if (data.err == 0) {
+                // TODO display this information on page
                 console.log("access granted");
                 db = data.res;
                 updateSelection(document.getElementById("entries"));
                 updateContextMenus();
-                // var entries = data.res;
-                // var entriesEl = document.getElementById("entries");
-                // for (var i = 0; i < entries.length; i++) {
-                //     var opt = document.createElement("OPTION");
-                //     opt.value = entries[i].uuid;
-                //     opt.innerText = entries[i].title;
-                //     entriesEl.appendChild(opt);
-                // }
-                // db = data.res;
             } else {
                 console.log("access denied");
             }
-            // this is inserting the content into the web page
-            // item.textContent = JSON.stringify(data);
         }
-        // console.log("data is: " + JSON.stringify(data));
     };
     x.open("GET", "http://127.0.0.1:3000/dump?password=" + pw, true);
     x.send();
 }
 
-document.addEventListener('DOMContentLoaded', function () {
-  document.querySelector('button').addEventListener('click', rewriteStuff);
-});
+function showEntry(e) {
+    var entriesEl = document.getElementById('entries');
+    var uuid = entriesEl.options[entriesEl.selectedIndex].value;
+    var entry = dbLookup(uuid);
+    if (entry !== null) {
+        document.getElementById('entry_title').value = entry.title;
+        document.getElementById('entry_password').value = entry.password;
+        document.getElementById('entry_uuid').value = entry.uuid;
+        hidePassword();
+    } else {
+        console.log("couldn't get entry");
+    }
+}
 
+function toggleShowEntryPassword(e) {
+    var entryPassEl = document.getElementById('entry_password');
+    entryPassEl.type = entryPassEl.type === "password" ?
+        "text" : "password";
+}
+
+function hidePassword() {
+    var entryPassEl = document.getElementById('entry_password');
+    entryPassEl.type = "password";
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('init').addEventListener('click', rewriteStuff);
+    document.getElementById('edit').addEventListener('click', showEntry);
+    document.getElementById('toggle_password').addEventListener('click', toggleShowEntryPassword);
+});
