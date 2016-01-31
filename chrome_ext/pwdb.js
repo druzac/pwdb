@@ -65,7 +65,7 @@ function pwdbGetDump(pw, item) {
                 updateSelection(document.getElementById("entries"));
                 updateContextMenus();
             } else {
-                console.log("access denied");
+                console.log("access denied: " + JSON.stringify(data));
             }
         }
     };

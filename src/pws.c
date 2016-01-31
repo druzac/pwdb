@@ -1121,7 +1121,7 @@ read_pwsdb(struct db *db, const char *pw, FILE *dbf)
     /* now check password */
     keystretch(pw, salt, iter, pw_key);
     if (!check_pass(pw_key, hashed_pw_key)) {
-        printf("password is incorrect\n");
+        errno = EPERM;
         goto out;
     }
 
@@ -1179,9 +1179,11 @@ read_pwsdb(struct db *db, const char *pw, FILE *dbf)
     rc = 0;
  out:
     if (rc) {
+        int err = errno;
         destroy_db(db);
         free(db);
         db = NULL;
+        errno = err;
     }
     return rc;
 }

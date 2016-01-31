@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use libc::{c_short, c_char, c_uint};
 use uuid::Uuid;
-use rustc_serialize::json::{self, Json, ToJson};
+use rustc_serialize::json::{Json, ToJson};
 
 #[derive(Debug)]
 #[repr(C)]
@@ -44,6 +44,7 @@ struct CField {
 }
 
 #[link(name = "pwdb")]
+#[allow(dead_code)]
 extern {
     fn pwsdb_open(pw: *const c_char, dbpath: *const c_char) -> *mut CDb;
     fn pwsdb_save(db: *const CDb, pw: *const c_char, dbpath: *const c_char);
@@ -63,6 +64,7 @@ impl Drop for Db {
     }
 }
 
+#[allow(dead_code)]
 impl Db {
     pub fn open(pw: &str, dbpath: &str) -> Result<Db> {
         let cdbp = CString::new(dbpath).unwrap();
@@ -70,9 +72,9 @@ impl Db {
         unsafe {
             let db = pwsdb_open(cpw.as_ptr(), cdbp.as_ptr());
             if db.is_null() {
-                Err(Error::from_raw_os_error(2))
+                let err = Error::last_os_error();
+                Err(err)
             } else {
-                println!("db: {:?}", *db);
                 Ok(Db { cdb: db })
             }
         }
@@ -94,16 +96,12 @@ impl ToJson for Db {
         unsafe {
             let rec_head = (*self.cdb).records;
             let mut rec = rec_head;
-            println!("is it null? {:?}", rec.is_null());
-            println!("address: {:?}", rec);
-            println!("address of cdb ptr: {:?}", self.cdb);
             if !rec_head.is_null() {
                 loop {
                     let mut recd = BTreeMap::new();
                     let pass = CStr::from_ptr((*rec).password);
                     let title = CStr::from_ptr((*rec).title);
                     let uuid = Uuid::from_bytes(&(*rec).uuid).unwrap();
-                    println!("uuid: {:?}", uuid);
                     recd.insert("password".to_string(),
                                 pass.to_str().unwrap().to_json());
                     recd.insert("title".to_string(),
@@ -138,29 +136,3 @@ impl ToJson for Db {
 
 // struct db *
 // pwsdb_open(const char *pw, const char *dbpath);
-
-
-
-// use std::ffi::CStr;
-
-// #[link(name = "hw")]
-// extern {
-//     fn say_hello();
-//     fn dummy_list() -> *mut Node;
-// }
-
-// #[repr(C)]
-// struct Node {
-//     name: *mut i8,
-//     next: *mut Node,
-// }
-
-// fn main() {
-//     unsafe {
-//         say_hello();
-//         let x = dummy_list();
-//         let slice = CStr::from_ptr((*x).name);
-//         println!("first is: {:?}", slice);
-//         println!("second is: {:?}", CStr::from_ptr((*(*x).next).name));
-//     }
-// }

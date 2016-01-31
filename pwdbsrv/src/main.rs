@@ -5,9 +5,8 @@ extern crate uuid;
 
 mod pwdb;
 
-use std::io::Result;
 use std::io::Write;
-use std::ffi::CString;
+use std::error::Error;
 use std::collections::{HashMap, BTreeMap};
 
 use hyper::Server;
@@ -28,9 +27,6 @@ use rustc_serialize::json::{Json, ToJson};
 // fn hello(_: Request, res: Response) {
 //     res.send(b"Hello World!").unwrap();
 // }
-
-fn handler(req: Request, res: Response) {
-}
 
 struct DbHandler {
     dbpath: String,
@@ -94,18 +90,9 @@ impl Handler for DbHandler {
                         match args.get("password") {
                             Some(pw) => {
                                 println!("have a password arg");
-                                match self.dump(pw) {
-                                    Ok(val) => {
-                                        // all ok
-                                        res.headers_mut().set(ContentType::json());
-                                        let mut res = res.start().unwrap();
-                                        res.write_all(val.as_bytes()).unwrap();
-                                    }
-                                    Err(e) => println!("dump failed: {:?}", e),
-                                }
-                                    
-                                let val = self.dump(pw);
-                                println!("we got: {:?}", val);
+                                res.headers_mut().set(ContentType::json());
+                                let mut res = res.start().unwrap();
+                                res.write_all(self.dump(pw).as_bytes()).unwrap();
                             }
                             None => {
                                 println!("no password!");
@@ -131,13 +118,23 @@ impl DbHandler {
         DbHandler { dbpath: dbpath }
     }
 
-    fn dump(&self, pw: &str) -> Result<String> {
-        let db = try!(pwdb::Db::open(pw, &self.dbpath));
+    fn dump(&self, pw: &str) -> String {
         let mut d = BTreeMap::new();
-        let err: u8 = 0;
-        d.insert("err".to_string(), err.to_json());
-        d.insert("res".to_string(), db.to_json());
-        Ok(Json::Object(d).to_string())
+        match pwdb::Db::open(pw, &self.dbpath) {
+            Ok(db) => {
+                d.insert("err".to_string(), 0.to_json());
+                d.insert("res".to_string(), db.to_json());
+            }
+            Err(e) => {
+                let err = match e.raw_os_error() {
+                    Some(0) | None => 1,
+                    Some(i) => i,
+                };
+                d.insert("err".to_string(), err.to_json());
+                d.insert("res".to_string(), e.description().to_json());
+            }
+        }
+        Json::Object(d).to_string()
     }
 }
 
@@ -147,23 +144,5 @@ impl DbHandler {
 fn main() {
     let dbpath = "/Users/zach/Documents/pwsafe_foo";
     let hdlr = DbHandler::new(dbpath.to_string());
-    Server::http("127.0.0.1:3000").unwrap().handle(hdlr);
-
-    // let dbpath = "/Users/zach/repos/mine/pwdb/src/test_db";
-
-    // let pw = "foo";
-    // if let Ok(db) = pwdb::Db::open(pw, dbpath) {
-    //     println!("tutto bene");
-    //     db.print();
-    //     println!("json string:\n{}", db.to_json().to_string());
-    // } else {
-    //     println!("problems!");
-    // }
-
-    // let dbpath = CString::new("/Users/zach/repos/mine/pwdb/src/test_db").unwrap();
-    // let pass = CString::new("foo").unwrap();
-    // unsafe {
-    //     let db = pwdb::pwsdb_open(pass.as_ptr(), dbpath.as_ptr());
-    //     pwdb::print_db(db);
-    // }
+    Server::http("127.0.0.1:3000").unwrap().handle(hdlr).unwrap();
 }
