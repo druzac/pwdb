@@ -23,16 +23,9 @@ use rustc_serialize::json::{Json, ToJson};
 // arguments:
 // password
 
-// analyze the request here
-// fn hello(_: Request, res: Response) {
-//     res.send(b"Hello World!").unwrap();
-// }
-
 struct DbHandler {
     dbpath: String,
 }
-
-// sample http junk
 
 // POST /blog/posts
 // Accept: application/json
@@ -44,73 +37,63 @@ struct DbHandler {
 // Content-Length: 65
 // Connection: close
 
-// use std::io::Write;
-// use hyper::header::ContentLength;
-// fn handler(mut res: Response) {
-//     let body = b"Hello World!";
-//     res.headers_mut().set(ContentLength(body.len() as u64));
-//     let mut res = res.start().unwrap();
-//     res.write_all(body).unwrap();
-// }
-
-// get the path and the args in the uri
+fn url_args(arg_str: &str) -> HashMap<String, String> {
+    let raw_args: Vec<_> = arg_str.split('&').collect();
+    let mut args = HashMap::new();
+    for arg in raw_args {
+        match arg.find('=') {
+            Some(idx) => {
+                let (param, val) = arg.split_at(idx);
+                args.insert(param.to_string(), val[1..].to_string());
+            }
+            None => {
+                println!("bad bad bad request");
+            }
+        }
+    }
+    args
+}
 
 impl Handler for DbHandler {
     fn handle(&self, req: Request, mut res: Response) {
-        // let body = b"hello, world!";
-        println!("remote addr: {:?}, method: {:?}, uri: {:?}",
-                 req.remote_addr,
-                 req.method,
-                 req.uri);
         match req.uri {
             RequestUri::AbsolutePath(s) => {
-                // split the string into the path and the args
-                let pieces: Vec<_> = s.split('?').collect();
-                assert!(pieces.len() == 2 || pieces.len() == 1);
-                let raw_args: Vec<_> = pieces[1].split('&').collect();
-                // association list
-                // let mut args = Vec::new();
-                let mut args = HashMap::new();
-                for arg in raw_args {
-                    println!("arg: {:?}", arg);
-                    match arg.find('=') {
-                        Some(idx) => {
-                            let (param, val) = arg.split_at(idx);
-                            args.insert(param.to_string(), val[1..].to_string());
-                        }
-                        None => {
-                            println!("bad bad bad request");
-                            panic!();
-                        }
-                    }
-                }
-                println!("processed args: {:?}", args);
-                match pieces[0] {
+                let (route, args) = match s.find('?') {
+                    Some(idx) => (&s[0..idx], url_args(&s[idx+1..])),
+                    None => (&s[..], HashMap::new()),
+                };
+                match route {
                     "/dump" => {
                         match args.get("password") {
                             Some(pw) => {
-                                println!("have a password arg");
                                 res.headers_mut().set(ContentType::json());
                                 let mut res = res.start().unwrap();
                                 res.write_all(self.dump(pw).as_bytes()).unwrap();
                             }
                             None => {
-                                println!("no password!");
+                                res.headers_mut().set(ContentType::json());
+                                let mut res = res.start().unwrap();
+                                res.write_all(make_resp(
+                                    22,
+                                    &"missing required argument".to_json())
+                                              .as_bytes()).unwrap();
                             }
                         }
                     }
-                    _ => println!("something else tickled: {}", pieces[0]),
+                    _ => println!("something else tickled: {}", route),
                 }
             },
             RequestUri::AbsoluteUri(_) => println!("abs uri"),
             _ => println!("something else"),
         }
-        // res.headers_mut().set(ContentType::json());
-        // let mut res = res.start().unwrap();
-        // res.write_all(body).unwrap();
-        // res.send(b"hello, world!").unwrap();
-        // res.send(
     }
+}
+
+fn make_resp<T: ToJson>(err_code: i32, res: &T) -> String {
+    let mut d = BTreeMap::new();
+    d.insert("err".to_string(), err_code.to_json());
+    d.insert("res".to_string(), res.to_json());
+    Json::Object(d).to_string()
 }
 
 impl DbHandler {
@@ -119,22 +102,16 @@ impl DbHandler {
     }
 
     fn dump(&self, pw: &str) -> String {
-        let mut d = BTreeMap::new();
         match pwdb::Db::open(pw, &self.dbpath) {
-            Ok(db) => {
-                d.insert("err".to_string(), 0.to_json());
-                d.insert("res".to_string(), db.to_json());
-            }
+            Ok(db) => make_resp(0, &db),
             Err(e) => {
                 let err = match e.raw_os_error() {
                     Some(0) | None => 1,
                     Some(i) => i,
                 };
-                d.insert("err".to_string(), err.to_json());
-                d.insert("res".to_string(), e.description().to_json());
+                make_resp(err, &e.description().to_json())
             }
         }
-        Json::Object(d).to_string()
     }
 }
 
