@@ -1,3 +1,5 @@
+#![feature(clone_from_slice)]
+
 extern crate hyper;
 extern crate libc;
 extern crate rustc_serialize;
@@ -103,7 +105,9 @@ impl DbHandler {
 
     fn dump(&self, pw: &str) -> String {
         match pwdb::Db::open(pw, &self.dbpath) {
-            Ok(db) => make_resp(0, &db),
+            Ok(db) => {
+                make_resp(0, &db)
+            }
             Err(e) => {
                 let err = match e.raw_os_error() {
                     Some(0) | None => 1,

@@ -62,6 +62,7 @@ function pwdbGetDump(pw, item) {
                 // TODO display this information on page
                 console.log("access granted");
                 db = data.res;
+                console.log("db is: " + JSON.stringify(db));
                 updateSelection(document.getElementById("entries"));
                 updateContextMenus();
             } else {
