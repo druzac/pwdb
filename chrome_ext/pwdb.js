@@ -1,12 +1,10 @@
 var db = undefined;
+var sorted_recs = undefined;
 
 function dbLookup(uuid) {
     if (db === undefined)
         return null;
-    for (var i = 0; i < db.length; i++) {
-        if (db[i].uuid === uuid)
-            return db[i];
-    }
+    return db.records[uuid];
 }
 
 function updateSelection(selectEl) {
@@ -14,10 +12,10 @@ function updateSelection(selectEl) {
     for (var i = n_children - 1; i >= 0; i--) {
         selectEl.removeChild(selectEl.children[i]);
     }
-    for (var i = 0; i < db.length; i++) {
+    for (var i = 0; i < sorted_recs.length; i++) {
         var opt = document.createElement("OPTION");
-        opt.value = db[i].uuid;
-        opt.innerText = db[i].title;
+        opt.value = sorted_recs[i].uuid;
+        opt.innerText = sorted_recs[i].title;
         selectEl.appendChild(opt);
     }
 }
@@ -25,10 +23,10 @@ function updateSelection(selectEl) {
 function contextMenuTest(info) {
     console.log("menu item id: " + info.menuItemId);
     console.log("sending message");
-    for (var i = 0; i < db.length; i++) {
-        if (db[i].uuid === info.menuItemId) {
+    for (var i = 0; i < sorted_recs.length; i++) {
+        if (sorted_recs[i].uuid === info.menuItemId) {
             chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                chrome.tabs.sendMessage(tabs[0].id, {greeting: "hello", payload: db[i].password});
+                chrome.tabs.sendMessage(tabs[0].id, {greeting: "hello", payload: sorted_recs[i].password});
             });
             break;
         }
@@ -37,10 +35,10 @@ function contextMenuTest(info) {
 
 function updateContextMenus() {
     chrome.contextMenus.removeAll(function() {
-        for (var i = 0; i < db.length; i++) {
-            chrome.contextMenus.create({"title": db[i].title,
+        for (var i = 0; i < sorted_recs.length; i++) {
+            chrome.contextMenus.create({"title": sorted_recs[i].title,
                                         "contexts": ["editable"],
-                                        "id": db[i].uuid,
+                                        "id": sorted_recs[i].uuid,
                                         "onclick": contextMenuTest});
         }
     });
@@ -62,7 +60,22 @@ function pwdbGetDump(pw, item) {
                 // TODO display this information on page
                 console.log("access granted");
                 db = data.res;
-                console.log("db is: " + JSON.stringify(db));
+                sorted_recs = []
+                var records = db.records;
+
+                for (var key in records) {
+                    // skip loop if the property is from prototype
+                    if (!records.hasOwnProperty(key)) continue;
+
+                    var rec = records[key];
+                    console.log("rec is: " + JSON.stringify(rec));
+                    rec.uuid = key
+                    sorted_recs.push(rec);
+                }
+                sorted_recs.sort(function (rec1, rec2) {
+                    return (rec1.title < rec2.title ? -1 :
+                            rec1.title > rec2.title ? 1 : 0);
+                });
                 updateSelection(document.getElementById("entries"));
                 updateContextMenus();
             } else {

@@ -1,4 +1,4 @@
-#![feature(clone_from_slice)]
+// #![feature(clone_from_slice)]
 
 extern crate hyper;
 extern crate libc;

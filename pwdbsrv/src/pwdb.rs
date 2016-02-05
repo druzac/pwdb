@@ -1,7 +1,6 @@
 use std::io::{Result, Error};
 use std::ffi::{CString, CStr};
-use std::collections::{HashMap, BTreeMap};
-use std::slice;
+use std::collections::BTreeMap;
 
 use libc::{c_short, c_char, c_uint, c_int};
 use uuid::Uuid;
@@ -51,110 +50,19 @@ extern {
     fn pwsdb_save(db: *const CDb, pw: *const c_char, dbpath: *const c_char) -> c_int;
     fn print_db(db: *const CDb);
     fn destroy_db(db: *mut CDb);
-}
-
-#[derive(Debug)]
-struct Record {
-    title: String,
-    password: String,
-    user: String,
-    url: String,
-    fields: Vec<Field>,
-}
-
-#[derive(Debug)]
-struct Field {
-    ftype: u8,
-    data: Vec<u8>,
-}
-
-struct DbHeader {
-    version: u16,
-    fields: Vec<Field>,
-}
-
-pub struct MyDb {
-    header: DbHeader,
-    records: HashMap<Uuid, Record>,
-}
-
-impl MyDb {
-    pub fn new(version: u16) -> MyDb {
-        MyDb {
-            header: DbHeader { version: version,
-                               fields: vec![] },
-            records: HashMap::new()
-        }
-    }
-
-    pub fn open(pw: &str, dbpath: &str) -> Result<MyDb> {
-        let cdbp = CString::new(dbpath).unwrap();
-        let cpw = CString::new(pw).unwrap();
-        unsafe {
-            let mut cdb = pwsdb_open(cpw.as_ptr(), cdbp.as_ptr());
-            let is_null = cdb.is_null();
-            if is_null {
-                let err = Error::last_os_error();
-                Err(err)
-            } else {
-                let res = Ok(cdb_to_db(cdb));
-                res
-            }
-        }
-    }
-}
-
-impl ToJson for Record {
-    fn to_json(&self) -> Json {
-        let mut d = BTreeMap::new();
-        d.insert("title".to_string(), self.title.to_json());
-        d.insert("password".to_string(), self.password.to_json());
-        d.insert("user".to_string(), self.user.to_json());
-        d.insert("url".to_string(), self.url.to_json());
-        Json::Object(d)
-    }
-}
-
-impl ToJson for DbHeader {
-    fn to_json(&self) -> Json {
-        let mut d = BTreeMap::new();
-        d.insert("version".to_string(), self.version.to_json());
-        Json::Object(d)
-    }
-}
-
-impl ToJson for MyDb {
-    fn to_json(&self) -> Json {
-        let mut d = BTreeMap::new();
-        d.insert("header".to_string(), self.header.to_json());
-        let mut records = BTreeMap::new();
-        for (uuid, record) in self.records.iter() {
-            records.insert(uuid.to_hyphenated_string(), record.to_json());
-        }
-        d.insert("records".to_string(), Json::Object(records));
-        Json::Object(d)
-    }
+    fn pwsdb_add_record(db: *mut CDb,
+                        title: *const c_char,
+                        pass: *const c_char,
+                        user: *const c_char,
+                        url: *const c_char,
+                        uuid: *mut u8) // OUT
+                        -> c_int;
+    fn pwsdb_remove_record(db: *mut CDb, uuid: *const u8) -> c_int;
+    fn pwsdb_get_pass(db: *const CDb, uuid: *const u8) -> *const c_char; // borrowed
 }
 
 pub struct Db {
     cdb: *mut CDb,
-}
-
-unsafe fn cfield_to_fields(cfield: *const CField) -> Vec<Field> {
-    let mut fs = vec![];
-    let mut cf = cfield;
-    if !cfield.is_null() {
-        loop {
-            let data = slice::from_raw_parts((*cf).data as *const u8,
-                                             (*cf).len as usize);
-            fs.push(Field { ftype: (*cf).ftype as u8, data: data.to_vec() } );
-            cf = (*cf).next;
-            if cf == cfield {
-                break
-            }
-        }
-    }
-    fs
 }
 
 unsafe fn cstr_to_string(c_str: *const c_char) -> String {
@@ -168,48 +76,6 @@ unsafe fn cstr_to_string(c_str: *const c_char) -> String {
     }
 }
 
-unsafe fn crecord_to_record(crec: *const CRecord) -> Record {
-    Record {
-        title: cstr_to_string((*crec).title),
-        password: cstr_to_string((*crec).password),
-        user: cstr_to_string((*crec).user),
-        url: cstr_to_string((*crec).url),
-        fields: cfield_to_fields((*crec).fields),
-    }
-}
-
-unsafe fn records_map(crec_hd: *const CRecord) -> HashMap<Uuid, Record> {
-    let mut records = HashMap::new();
-    let mut crec = crec_hd;
-    if !crec.is_null() {
-        loop {
-            let uuid = Uuid::from_bytes(&(*crec).uuid).unwrap();
-            records.insert(uuid, crecord_to_record(crec));
-            crec = (*crec).next;
-            if crec == crec_hd {
-                break
-            }
-        }
-    }
-    records
-}
-
-// needs the cdb to be non-null
-// frees the memory
-unsafe fn cdb_to_db(cdb: *mut CDb) -> MyDb {
-    // build header
-    let db_hdr = DbHeader {
-        version: (*cdb).header.version as u16,
-        fields: cfield_to_fields((*cdb).header.fields)
-    };
-    let res = MyDb {
-        header: db_hdr,
-        records: records_map((*cdb).records),
-    };
-    destroy_db(cdb);
-    res
-}
-
 impl Drop for Db {
     fn drop(&mut self) {
         unsafe {
@@ -220,6 +86,7 @@ impl Drop for Db {
 
 #[allow(dead_code)]
 impl Db {
+
     pub fn open(pw: &str, dbpath: &str) -> Result<Db> {
         let cdbp = CString::new(dbpath).unwrap();
         let cpw = CString::new(pw).unwrap();
@@ -239,109 +106,118 @@ impl Db {
             print_db(self.cdb)
         }
     }
+
+    pub fn add_record(&mut self,
+                      title: &str,
+                      pass: &str,
+                      user: &str,
+                      url: &str) -> Option<Uuid> {
+        let mut raw_uuid: [u8; 16] = [0; 16];
+        unsafe {
+            let res = pwsdb_add_record(self.cdb,
+                                       CString::new(title).unwrap().as_ptr(),
+                                       CString::new(pass).unwrap().as_ptr(),
+                                       CString::new(user).unwrap().as_ptr(),
+                                       CString::new(url).unwrap().as_ptr(),
+                                       raw_uuid.as_mut_ptr());
+            match res {
+                0 => Some(Uuid::from_bytes(&raw_uuid).unwrap()),
+                _ => None,
+            }
+        }
+    }
+
+    pub fn remove_record(&mut self, uuid: &Uuid) -> bool {
+        unsafe {
+            let res = pwsdb_remove_record(self.cdb,
+                                          uuid.as_bytes().as_ptr());
+            match res {
+                0 => true,
+                _ => false,
+            }
+        }
+    }
+
+    pub fn save(&self, pw: &str, path: &str) -> Result<()> {
+        unsafe {
+            let rc = pwsdb_save(self.cdb,
+                                CString::new(pw).unwrap().as_ptr(),
+                                CString::new(path).unwrap().as_ptr());
+            match rc {
+                0 => Ok(()),
+                _ => Err(Error::last_os_error()),
+            }
+        }
+    }
+
+    pub fn get_pass(&self, uuid: &Uuid) -> Option<String> {
+        unsafe {
+            let s = pwsdb_get_pass(self.cdb, uuid.as_bytes().as_ptr());
+            if s.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(s).to_str().unwrap().to_string())
+            }
+        }
+    }
 }
 
 impl ToJson for Db {
     fn to_json(&self) -> Json {
-        // let mut d = BTreeMap::new();
-        let mut v = Vec::new();
+        let mut d = BTreeMap::new();
+        fn header_to_json(hdr: &CDbHeader) -> Json {
+            let mut blob = BTreeMap::new();
+            blob.insert("version".to_string(),
+                        hdr.version.to_json());
+            Json::Object(blob)
+        }
+
+        unsafe fn record_to_json(rec: &CRecord) -> Json {
+            let mut blob = BTreeMap::new();
+            blob.insert("title".to_string(), cstr_to_string(rec.title).to_json());
+            blob.insert("password".to_string(), cstr_to_string(rec.password).to_json());
+            blob.insert("user".to_string(), cstr_to_string(rec.user).to_json());
+            blob.insert("url".to_string(), cstr_to_string(rec.url).to_json());
+
+            Json::Object(blob)
+        }
+
         unsafe {
+            d.insert("header".to_string(), header_to_json(&(*self.cdb).header));
             let rec_head = (*self.cdb).records;
             let mut rec = rec_head;
+            let mut records = BTreeMap::new();
             if !rec_head.is_null() {
                 loop {
-                    let mut recd = BTreeMap::new();
-                    let pass = CStr::from_ptr((*rec).password);
-                    let title = CStr::from_ptr((*rec).title);
                     let uuid = Uuid::from_bytes(&(*rec).uuid).unwrap();
-                    recd.insert("password".to_string(),
-                                pass.to_str().unwrap().to_json());
-                    recd.insert("title".to_string(),
-                                title.to_str().unwrap().to_json());
-                    recd.insert("uuid".to_string(),
-                                uuid.to_simple_string().to_json());
-                    v.push(Json::Object(recd));
+                    records.insert(uuid.to_simple_string(),
+                                   record_to_json(&*rec));
                     rec = (*rec).next;
                     if rec == rec_head {
                         break
                     }
                 }
             }
+            d.insert("records".to_string(), Json::Object(records));
+            Json::Object(d)
         }
-        Json::Array(v)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::{CString, CStr};
-    use uuid::Uuid;
-    use libc::{c_char, c_int};
-    use super::{CDb, MyDb, CDbHeader, cdb_to_db};
+    use super::{Db, CDb, CDbHeader};
     use std::ptr::null_mut;
-    use std::collections::HashMap;
 
     use std::path::PathBuf;
-    use std::fs::{create_dir_all, File};
+    use std::fs::create_dir_all;
     use std::env;
     use rustc_serialize::json::{Json, ToJson};
 
-    #[link(name = "pwdb")]
-    extern {
-        fn pwsdb_open(pw: *const c_char, dbpath: *const c_char) -> *mut CDb;
-        fn pwsdb_save(db: *const CDb, pw: *const c_char, dbpath: *const c_char) -> c_int;
-        fn print_db(db: *const CDb);
-        fn destroy_db(db: *mut CDb);
-        fn pwsdb_init(db: *mut CDb);
-        fn pwsdb_add_record(db: *mut CDb,
-                            title: *const c_char,
-                            pass: *const c_char,
-                            user: *const c_char,
-                            url: *const c_char,
-                            uuid: *mut u8);
-    }
-
     fn new_cdb() -> CDb {
-        CDb {
-            header: CDbHeader {
-                version: 0,
-                fields: null_mut(),
-            },
-            records: null_mut(),
-        }
-    }
-
-    #[test]
-    fn it_works() {
-        assert_eq!(4, 2 + 2);
-    }
-
-    #[test]
-    fn empty_cdb_to_db() {
-        let mut cdb = new_cdb();
-        unsafe {
-            let db = cdb_to_db(&mut cdb);
-            assert_eq!(db.header.version, 0);
-            assert!(db.header.fields.is_empty());
-            assert!(db.records.is_empty());
-        }
-    }
-
-    fn add_record_to_cdb(cdb: &mut CDb,
-                         title: &str,
-                         pass: &str,
-                         user: &str,
-                         url: &str) -> Uuid {
-        let mut raw_uuid: [u8; 16] = [0; 16];
-        unsafe {
-            pwsdb_add_record(cdb,
-                             CString::new(title).unwrap().as_ptr(),
-                             CString::new(pass).unwrap().as_ptr(),
-                             CString::new(user).unwrap().as_ptr(),
-                             CString::new(url).unwrap().as_ptr(),
-                             raw_uuid.first_mut().unwrap());
-        }
-        Uuid::from_bytes(&raw_uuid).unwrap()
+        CDb { header: CDbHeader { version: 0,
+                                  fields: null_mut() },
+              records: null_mut() }
     }
 
     #[test]
@@ -351,38 +227,67 @@ mod tests {
         let _ = create_dir_all(&dir);
         let fpath = dir.with_file_name("pwsdb_test");
         let mut cdb = new_cdb();
-        let uuid = add_record_to_cdb(&mut cdb, "title", "pass", "user", "url");
-        unsafe {
-            assert_eq!(0,
-                       pwsdb_save(&mut cdb,
-                                  CString::new("foo").unwrap().as_ptr(),
-                                  CString::new(fpath.to_str().unwrap()).unwrap().as_ptr()));
-        }
-        let mydb = MyDb::open("foo", fpath.to_str().unwrap()).unwrap();
-        assert!(mydb.records.contains_key(&uuid));
-        let blob = mydb.to_json();
-        println!("res: {}", blob.to_string());
+        let mut db = Db { cdb: &mut cdb };
+
+        let uuid = db.add_record("title", "pass", "user", "url").unwrap();
+        assert!(db.save("foo",
+                        fpath.to_str().unwrap()).is_ok());
+        let db = Db::open("foo", fpath.to_str().unwrap()).unwrap();
+        let res = db.get_pass(&uuid);
+        assert!(res.is_some());
+        assert_eq!(res.unwrap(), "pass");
     }
 
     #[test]
-    fn singleton_cdb_to_db() {
+    fn remove_record() {
         let mut cdb = new_cdb();
-        unsafe {
-            pwsdb_init(&mut cdb);
-            let exp_uuid = add_record_to_cdb(&mut cdb,
-                                             "title",
-                                             "pass",
-                                             "user",
-                                             "url");
+        let mut db = Db { cdb: &mut cdb };
+        let u1 = db.add_record("t1", "p1", "u1", "url1").unwrap();
+        let u2 = db.add_record("t2", "p2", "u2", "url2").unwrap();
 
-            let db = cdb_to_db(&mut cdb);
-            assert!(!db.records.is_empty());
-            let (uuid, rec) = db.records.iter().next().unwrap();
-            assert_eq!(uuid, &exp_uuid);
-            assert_eq!(rec.title, "title");
-            assert_eq!(rec.password, "pass");
-            assert_eq!(rec.user, "user");
-            assert_eq!(rec.url, "url");
-        }
+        assert!(db.get_pass(&u1).is_some());
+        assert!(db.get_pass(&u2).is_some());
+
+        assert!(db.remove_record(&u2));
+        assert!(db.get_pass(&u1).is_some());
+        assert!(db.get_pass(&u2).is_none());
+    }
+
+    #[test]
+    fn cdb_to_json() {
+        let mut cdb = new_cdb();
+        let mut db = Db { cdb: &mut cdb };
+        let u1 = db.add_record("t1", "p1", "u1", "url1").unwrap();
+        let mut jblob = db.to_json();
+        if let Json::Object(ref mut base) = jblob {
+            assert_eq!(base.len(), 2);
+            let mut jrecords = base.remove("records").unwrap();
+            if let Json::Object(ref mut records) = jrecords {
+                assert_eq!(records.len(), 1);
+                let mut jrec = records.remove(&u1.to_simple_string()).unwrap();
+                if let Json::Object(ref mut rec) = jrec {
+                    let jtitle = rec.remove("title").unwrap();
+                    if let Json::String(ref title) = jtitle {
+                        assert_eq!(title, "t1");
+                    } else { assert!(false); }
+
+                    let jpassword = rec.remove("password").unwrap();
+                    if let Json::String(ref password) = jpassword {
+                        assert_eq!(password, "p1");
+                    } else { assert!(false); }
+
+                    let juser = rec.remove("user").unwrap();
+                    if let Json::String(ref user) = juser {
+                        assert_eq!(user, "u1");
+                    } else { assert!(false); }
+
+                    let jurl = rec.remove("url").unwrap();
+                    if let Json::String(ref url) = jurl {
+                        assert_eq!(url, "url1");
+                    } else { assert!(false); }
+
+                } else { assert!(false); }
+            } else { assert!(false); }
+        } else { assert!(false); }
     }
 }
