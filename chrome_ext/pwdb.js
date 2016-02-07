@@ -1,6 +1,10 @@
 var db = undefined;
 var sorted_recs = undefined;
 
+function getEl(id) { return document.getElementById(id); }
+
+function logJson(obj) { console.log(JSON.stringify(obj)); }
+
 function dbLookup(uuid) {
     if (db === undefined)
         return null;
@@ -18,6 +22,28 @@ function updateSelection(selectEl) {
         opt.innerText = sorted_recs[i].title;
         selectEl.appendChild(opt);
     }
+}
+
+function refreshState(dbArg) {
+    db = dbArg;
+    sorted_recs = []
+    var records = db.records;
+
+    for (var key in records) {
+        // skip loop if the property is from prototype
+        if (!records.hasOwnProperty(key)) continue;
+
+        var rec = records[key];
+        console.log("rec is: " + JSON.stringify(rec));
+        rec.uuid = key
+        sorted_recs.push(rec);
+    }
+    sorted_recs.sort(function (rec1, rec2) {
+        return (rec1.title < rec2.title ? -1 :
+                rec1.title > rec2.title ? 1 : 0);
+    });
+    updateSelection(document.getElementById("entries"));
+    updateContextMenus();
 }
 
 function contextMenuTest(info) {
@@ -45,47 +71,9 @@ function updateContextMenus() {
 }
 
 function rewriteStuff(e) {
-    var par = document.getElementById("test_par");
-    var pw_field = document.getElementById("pw");
-    pwdbGetDump(pw_field.value, par);
+    var pw = document.getElementById("pw").value;
+    pwdb.dump(pw, refreshState, logJson);
 };
-
-function pwdbGetDump(pw, item) {
-    var x = new XMLHttpRequest();
-    x.onreadystatechange = function() {
-        if (x.readyState == XMLHttpRequest.DONE) {
-            console.log("ready state: " + x.readyState);
-            var data = JSON.parse(x.responseText);
-            if (data.err == 0) {
-                // TODO display this information on page
-                console.log("access granted");
-                db = data.res;
-                sorted_recs = []
-                var records = db.records;
-
-                for (var key in records) {
-                    // skip loop if the property is from prototype
-                    if (!records.hasOwnProperty(key)) continue;
-
-                    var rec = records[key];
-                    console.log("rec is: " + JSON.stringify(rec));
-                    rec.uuid = key
-                    sorted_recs.push(rec);
-                }
-                sorted_recs.sort(function (rec1, rec2) {
-                    return (rec1.title < rec2.title ? -1 :
-                            rec1.title > rec2.title ? 1 : 0);
-                });
-                updateSelection(document.getElementById("entries"));
-                updateContextMenus();
-            } else {
-                console.log("access denied: " + JSON.stringify(data));
-            }
-        }
-    };
-    x.open("GET", "http://127.0.0.1:3000/dump?password=" + pw, true);
-    x.send();
-}
 
 function showEntry(e) {
     var entriesEl = document.getElementById('entries');
@@ -101,6 +89,17 @@ function showEntry(e) {
     }
 }
 
+function deleteEntry(e) {
+    var pw = getEl("pw").value;
+    var uuid = getEl("entry_uuid").value;
+    console.log("delete function got uuid: " + uuid);
+    pwdb.remove_record(
+        pw, uuid,
+        refreshState,
+        logJson
+    );
+}
+
 function toggleShowEntryPassword(e) {
     var entryPassEl = document.getElementById('entry_password');
     entryPassEl.type = entryPassEl.type === "password" ?
@@ -112,8 +111,76 @@ function hidePassword() {
     entryPassEl.type = "password";
 }
 
+function addEntry(e) {
+    var db_pw = getEl("pw").value;
+    var title = getEl("entry_title").value;
+    var pw = getEl("entry_password").value;
+    console.log("args to add_record: " + db_pw + ", " + title + ", " + pw);
+    pwdb.add_record(
+        db_pw, title, pw,
+        refreshState,
+        logJson
+    );
+}
+
+function PwdbClient(addr, port) {
+    this.addr = addr;
+    this.port = port;
+    this.call = function(method, url, happyCont, errCont) {
+        var x = new XMLHttpRequest();
+        x.onreadystatechange = function() {
+            if (x.readyState == XMLHttpRequest.DONE) {
+                var data = JSON.parse(x.responseText);
+                if (data.err == 0) {
+                    console.log("calling happy continuation");
+                    happyCont(data.res);
+                } else {
+                    console.log("calling error continuation");
+                    errCont(data);
+                }
+            }
+        };
+        x.open(method, url, true);
+        x.send();
+    };
+    this.dump = function(pw, happyCont, errCont) {
+        this.call(
+            "GET",
+            "http://" + this.addr + ":" + this.port + "/dump?password=" + pw,
+            happyCont,
+            errCont
+        );
+    };
+    this.add_record = function(db_pw, title, rec_pw, hcont, econt) {
+        this.call(
+            "POST",
+            "http://" + this.addr + ":" + this.port +
+                "/add_record?db_password=" + db_pw + "&title=" + title +
+                "&rec_password=" + rec_pw,
+            hcont,
+            econt
+        );
+    };
+    this.remove_record = function(pw, uuid, hcont, econt) {
+        this.call(
+            "DELETE",
+            "http://" + this.addr + ":" + this.port +
+                "/remove_record?password=" + pw +
+                "&uuid=" + uuid,
+            hcont,
+            econt
+        );
+    };
+}
+
+var pwdb = new PwdbClient("localhost", 3000);
+
 document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('init').addEventListener('click', rewriteStuff);
     document.getElementById('edit').addEventListener('click', showEntry);
-    document.getElementById('toggle_password').addEventListener('click', toggleShowEntryPassword);
+    document.getElementById('toggle_password').addEventListener(
+        'click', toggleShowEntryPassword
+    );
+    getEl("add").addEventListener('click', addEntry);
+    getEl("delete").addEventListener('click', deleteEntry);
 });

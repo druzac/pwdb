@@ -84,7 +84,6 @@ impl Drop for Db {
     }
 }
 
-#[allow(dead_code)]
 impl Db {
 
     pub fn open(pw: &str, dbpath: &str) -> Result<Db> {
@@ -101,6 +100,7 @@ impl Db {
         }
     }
 
+    #[allow(dead_code)]
     pub fn print(&self) {
         unsafe {
             print_db(self.cdb)
@@ -150,6 +150,7 @@ impl Db {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_pass(&self, uuid: &Uuid) -> Option<String> {
         unsafe {
             let s = pwsdb_get_pass(self.cdb, uuid.as_bytes().as_ptr());
