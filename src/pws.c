@@ -1205,7 +1205,7 @@ int
 pwsdb_save(const struct db *db, const char *pw, char *dbpath)
 {
     int rc, tmpfd, err;
-    char tmpfname[] = "/tmp/pwsdb.tmpXXXXXX";
+    char tmpfname[] = "pwsdb.tmpXXXXXX";
     FILE *tmpdbf;
 
     rc = tmpfd = -1;
@@ -1231,6 +1231,7 @@ pwsdb_save(const struct db *db, const char *pw, char *dbpath)
     }
 
     if (rename(tmpfname, dbpath)) {
+        perror("rename failed");
         fprintf(stderr, "rename failed");
         goto out;
     }
