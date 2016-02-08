@@ -98,7 +98,7 @@ print_db(struct db *db)
 {
     struct field *field, *fields_head;
     struct record *record, *records_head;
-    uuid_string_t uuid_s;
+    char * uuid_s;
     printf("version: 0x%x\n", db->header.version);
 
     fields_head = db->header.fields;

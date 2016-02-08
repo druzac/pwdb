@@ -2,7 +2,7 @@
 # also clang only?
 
 CC = gcc
-CFLAGS = -g -Iinclude
+CFLAGS = -g -Iinclude -fPIC
 LDLIBS = -framework Cocoa -largp -lmenu -lform -lncurses -Llib -ltomcrypt
 
 objects = util.o pwdb.o pws.o clipb.o pwcurs.o

@@ -8,10 +8,13 @@ pwdbsrv: libpwdb.a libtomcrypt.a
 libpwdb: libtomcrypt
 	make -C src libpwdb.a
 
-libtomcrypt.a: libtomcrypt
+libpath:
+	test -e $(PWDBLIBPATH) || mkdir $(PWDBLIBPATH)
+
+libtomcrypt.a: libtomcrypt libpath
 	test -e $(PWDBLIBPATH)/libtomcrypt.a || cp ./src/lib/libtomcrypt.a $(PWDBLIBPATH)
 
-libpwdb.a: libpwdb
+libpwdb.a: libpwdb libpath
 	test -e $(PWDBLIBPATH)/libpwdb.a || cp ./src/libpwdb.a $(PWDBLIBPATH)
 
 src: libtomcrypt
